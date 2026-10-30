@@ -104,6 +104,8 @@ async def analyze_scene(req: SceneRequest):
         "You are an AI Object Detection and Walking Assistant for the visually impaired. "
         "Analyze the camera view carefully. Identify all visible objects, people, hazards, and obstacles (e.g. person, chair, cell phone, bottle, cup, laptop, car, door, steps, wall). "
         "Estimate the walking corridor (left, center, or right) and proximity (very close, close, or ahead) for each object. "
+        "IMPORTANT: Only set status to 'DANGER' if an actual physical hazard, vehicle, or obstacle is blocking the center walking path. "
+        "If the camera view is dark, blurry, empty, or clear, set status to 'SAFE', priority_alert to null, and inform the user that the path is clear. "
         "Respond strictly in JSON format with exact keys:\n"
         "{\n"
         '  "status": "SAFE" or "DANGER",\n'

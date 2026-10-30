@@ -305,7 +305,11 @@ class ClientObjectDetector {
             drawBoundingBoxes(detections);
             this.evaluateDetections(detections);
           } else {
+            this.hasActiveCritical = false;
             ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+            if (appState.lastHazardStatus !== 'SAFE') {
+              updateStatus('SAFE', "SAFE PATH", "Forward corridor is clear to walk");
+            }
           }
         } catch (e) {
           // ignore transient video draw errors
@@ -362,16 +366,19 @@ class ClientObjectDetector {
     const centerDets = detections.filter(d => d.corridor === 'center');
 
     if (critical) {
+      this.hasActiveCritical = true;
       const label = critical.label.toUpperCase();
       const alertMsg = `Warning: ${label} directly ahead in center path!`;
       updateStatus('DANGER', "DANGER AHEAD", alertMsg);
       audioCtrl.speak(alertMsg, true, critical.label);
     } else if (centerDets.length > 0) {
+      this.hasActiveCritical = false;
       const top = centerDets[0];
       const alertMsg = `${top.label.toUpperCase()} in center path (${top.proximity}).`;
       updateStatus('DANGER', "CAUTION", alertMsg);
       audioCtrl.speak(alertMsg, false, top.label);
     } else {
+      this.hasActiveCritical = false;
       const top = detections[0];
       const alertMsg = `${top.label.toUpperCase()} detected on ${top.corridor}.`;
       updateStatus('SAFE', "SAFE PATH", alertMsg);
@@ -385,12 +392,13 @@ window.clientDetector = clientDetector;
 // ============================================================================
 // 2. APPLICATION STATE & DOM REFERENCES
 // ============================================================================
+const isMobileDevice = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 const appState = {
   isCloudMode: window.location.hostname.includes('vercel.app') || window.location.port === '',
   ws: null,
   wsConnected: false,
   cameraStream: null,
-  facingMode: 'environment', // Rear camera by default
+  facingMode: isMobileDevice ? 'environment' : 'user', // Environment on mobile, webcam on desktop
   isListening: false,
   isProcessingOCR: false,
   recognition: null,
@@ -431,45 +439,68 @@ const repeatTitle = document.getElementById('repeatTitle');
 const repeatSub = document.getElementById('repeatSub');
 
 // ============================================================================
-// 3. WEBRTC CAMERA INITIALIZATION
+// 3. WEBRTC CAMERA INITIALIZATION (Resilient Desktop & Mobile Detection)
 // ============================================================================
 async function initCamera() {
   if (appState.cameraStream) {
-    appState.cameraStream.getTracks().forEach(t => t.stop());
+    try {
+      appState.cameraStream.getTracks().forEach(t => t.stop());
+    } catch (e) {}
   }
 
-  const constraints = {
-    audio: false,
-    video: {
-      facingMode: appState.facingMode,
-      width: { ideal: 640 },
-      height: { ideal: 480 }
+  let stream = null;
+  // 1. Try with ideal facingMode
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {
+        facingMode: { ideal: appState.facingMode },
+        width: { ideal: 640 },
+        height: { ideal: 480 }
+      }
+    });
+  } catch (err) {
+    console.warn("[Camera] Ideal facingMode failed, falling back to any available camera:", err);
+    try {
+      // 2. Fallback: Any available camera (laptop webcam)
+      stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: true });
+    } catch (err2) {
+      console.error("[Camera] All camera access attempts failed:", err2);
+      updateStatus('DANGER', "Camera Required", "Please allow camera permissions in your browser.");
+      return;
     }
-  };
+  }
+
+  appState.cameraStream = stream;
+  video.srcObject = stream;
 
   try {
-    appState.cameraStream = await navigator.mediaDevices.getUserMedia(constraints);
-    video.srcObject = appState.cameraStream;
-    video.onloadedmetadata = () => {
-      overlayCanvas.width = video.videoWidth;
-      overlayCanvas.height = video.videoHeight;
-      hiddenCanvas.width = video.videoWidth;
-      hiddenCanvas.height = video.videoHeight;
-    };
-  } catch (err) {
-    console.warn("[Camera] Camera access error:", err);
-    updateStatus('DANGER', "Camera Required", "Please allow camera permissions in your browser.");
+    await video.play();
+  } catch (e) {
+    console.warn("[Camera] Video play error:", e);
   }
+
+  const updateDims = () => {
+    const w = video.videoWidth || 640;
+    const h = video.videoHeight || 480;
+    overlayCanvas.width = w;
+    overlayCanvas.height = h;
+    hiddenCanvas.width = w;
+    hiddenCanvas.height = h;
+  };
+
+  video.onloadedmetadata = updateDims;
+  if (video.videoWidth > 0) updateDims();
 }
 
 // Flip Camera (Front / Rear)
-flipCamBtn.addEventListener('click', (e) => {
+flipCamBtn.addEventListener('click', async (e) => {
   e.stopPropagation();
   audioCtrl.unlock();
   audioCtrl.playTouchChime();
-  appState.facingMode = appState.facingMode === 'environment' ? 'user' : 'environment';
-  initCamera();
-  audioCtrl.speak("Camera flipped", true);
+  appState.facingMode = appState.facingMode === 'user' ? 'environment' : 'user';
+  await initCamera();
+  audioCtrl.speak("Camera switched", true);
 });
 
 // Voice Toggle (Mute / Unmute)
@@ -631,8 +662,8 @@ function handleCloudResults(data) {
     const hazardWord = extractHazardKeyword(alertMsg);
     audioCtrl.speak(alertMsg, true, hazardWord);
   } else {
-    // Only update to SAFE if clientDetector has not flagged an immediate critical danger
-    if (!clientDetector.isReady || appState.lastHazardStatus !== 'DANGER') {
+    // When cloud confirms path is clear and local detector has no active critical hazard, recover to SAFE!
+    if (!clientDetector.hasActiveCritical) {
       updateStatus('SAFE', "SAFE PATH", alertMsg);
     }
   }
