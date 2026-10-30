@@ -25,8 +25,16 @@ app.add_middleware(
 )
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-GROQ_VISION_MODEL = os.getenv("GROQ_VISION_MODEL", "llama-3.2-11b-vision-preview")
+GROQ_VISION_MODEL = os.getenv("GROQ_VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
 GROQ_FALLBACK_MODEL = os.getenv("GROQ_FALLBACK_MODEL", "llama-3.3-70b-versatile")
+
+# Candidate vision models in priority order
+VISION_CANDIDATE_MODELS = [
+    GROQ_VISION_MODEL,
+    "meta-llama/llama-4-scout-17b-16e-instruct",
+    "qwen/qwen3.8-27b",
+    "qwen/qwen3.6-27b",
+]
 
 def get_groq_client():
     key = os.getenv("GROQ_API_KEY", GROQ_API_KEY)
@@ -51,8 +59,44 @@ async def health():
         "status": "online",
         "environment": "Vercel Serverless Cloud Edge",
         "groq_configured": bool(get_groq_client()),
-        "vision_model": GROQ_VISION_MODEL
+        "vision_model": GROQ_VISION_MODEL,
+        "vision_candidates": VISION_CANDIDATE_MODELS
     }
+
+@app.get("/api/groq-models")
+async def list_groq_models():
+    """Diagnostic endpoint to inspect live supported models on Groq"""
+    client = get_groq_client()
+    if not client:
+        return {"error": "Groq client not configured"}
+    try:
+        models = await client.models.list()
+        return {"models": [m.id for m in models.data]}
+    except Exception as e:
+        return {"error": str(e)}
+
+async def call_groq_vision(client, messages, response_format=None, max_tokens=250):
+    last_err = None
+    for model in VISION_CANDIDATE_MODELS:
+        try:
+            kwargs = {
+                "model": model,
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "temperature": 0.2
+            }
+            if response_format:
+                kwargs["response_format"] = response_format
+            response = await client.chat.completions.create(**kwargs)
+            return response, model
+        except Exception as e:
+            last_err = e
+            err_msg = str(e).lower()
+            print(f"[Groq Vision] Model {model} error: {e}")
+            if any(k in err_msg for k in ["decommissioned", "not_found", "model_decommissioned", "invalid_request_error"]):
+                continue
+            raise e
+    raise last_err
 
 @app.post("/api/analyze-scene")
 async def analyze_scene(req: SceneRequest):
@@ -72,11 +116,12 @@ async def analyze_scene(req: SceneRequest):
 
     system_prompt = (
         "You are an AI Vision Assistant for a visually impaired or elderly person. "
-        "Analyze the camera view for hazards: potholes, open ditches, steep steps, loose wires, vehicles, or barriers. "
+        "Analyze the camera view for hazards: people, faces, obstacles, potholes, open ditches, steep steps, loose wires, vehicles, or barriers. "
+        "If a person or face or obstacle is visible, warn the user. "
         "Respond strictly in JSON format with exact keys:\n"
         "{\n"
         '  "status": "SAFE" or "DANGER",\n'
-        '  "priority_alert": "Short urgent warning if hazard exists else null",\n'
+        '  "priority_alert": "Short urgent warning if hazard or person exists else null",\n'
         '  "scene_description": "2 sentences describing the forward path and surroundings",\n'
         '  "speech_text": "Concise text to speak out loud in English"\n'
         "}\n"
@@ -85,23 +130,24 @@ async def analyze_scene(req: SceneRequest):
     img_url = req.image_b64 if req.image_b64.startswith("data:image") else f"data:image/jpeg;base64,{req.image_b64}"
 
     try:
-        response = await client.chat.completions.create(
-            model=GROQ_VISION_MODEL,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": req.query or "Check this path for walking hazards."},
-                        {"type": "image_url", "image_url": {"url": img_url}}
-                    ]
-                }
-            ],
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": req.query or "Check this path for walking hazards, people, or obstacles."},
+                    {"type": "image_url", "image_url": {"url": img_url}}
+                ]
+            }
+        ]
+        response, used_model = await call_groq_vision(
+            client,
+            messages=messages,
             response_format={"type": "json_object"},
-            max_tokens=200,
-            temperature=0.2
+            max_tokens=200
         )
         res_json = json.loads(response.choices[0].message.content)
+        res_json["used_model"] = used_model
         return res_json
     except Exception as e:
         print(f"[Vercel analyze-scene Error]: {e}")
@@ -109,7 +155,8 @@ async def analyze_scene(req: SceneRequest):
             "status": "SAFE",
             "priority_alert": None,
             "scene_description": "Camera monitoring active. Forward corridor is being tracked.",
-            "speech_text": "Path monitored."
+            "speech_text": "Path monitored.",
+            "error_detail": str(e)
         }
 
 @app.post("/api/ocr")
@@ -134,21 +181,21 @@ async def ocr_read(req: SceneRequest):
     img_url = req.image_b64 if req.image_b64.startswith("data:image") else f"data:image/jpeg;base64,{req.image_b64}"
 
     try:
-        response = await client.chat.completions.create(
-            model=GROQ_VISION_MODEL,
-            messages=[
-                {"role": "system", "content": "You are a fast document reading vision assistant."},
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": img_url}}
-                    ]
-                }
-            ],
+        messages = [
+            {"role": "system", "content": "You are a fast document reading vision assistant."},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": img_url}}
+                ]
+            }
+        ]
+        response, used_model = await call_groq_vision(
+            client,
+            messages=messages,
             response_format={"type": "json_object"},
-            max_tokens=300,
-            temperature=0.1
+            max_tokens=300
         )
         return json.loads(response.choices[0].message.content)
     except Exception as e:
@@ -181,13 +228,12 @@ async def chat_multimodal(req: ChatRequest):
         messages.append({"role": "user", "content": req.query})
 
     try:
-        res = await client.chat.completions.create(
-            model=GROQ_VISION_MODEL,
+        response, used_model = await call_groq_vision(
+            client,
             messages=messages,
-            max_tokens=150,
-            temperature=0.3
+            max_tokens=150
         )
-        return {"query": req.query, "reply": res.choices[0].message.content.strip()}
+        return {"query": req.query, "reply": response.choices[0].message.content.strip(), "used_model": used_model}
     except Exception as e:
         return {"query": req.query, "reply": f"Assistant response unavailable: {str(e)}"}
 
