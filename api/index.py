@@ -25,15 +25,13 @@ app.add_middleware(
 )
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-GROQ_VISION_MODEL = os.getenv("GROQ_VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
+GROQ_VISION_MODEL = os.getenv("GROQ_VISION_MODEL", "qwen/qwen3.8-27b")
 GROQ_FALLBACK_MODEL = os.getenv("GROQ_FALLBACK_MODEL", "llama-3.3-70b-versatile")
 
 # Candidate vision models in priority order
 VISION_CANDIDATE_MODELS = [
     GROQ_VISION_MODEL,
-    "meta-llama/llama-4-scout-17b-16e-instruct",
     "qwen/qwen3.8-27b",
-    "qwen/qwen3.6-27b",
 ]
 
 def get_groq_client():
@@ -62,31 +60,6 @@ async def health():
         "vision_model": GROQ_VISION_MODEL,
         "vision_candidates": VISION_CANDIDATE_MODELS
     }
-
-@app.post("/api/debug-model")
-async def debug_model(req: SceneRequest):
-    client = get_groq_client()
-    if not client:
-        return {"error": "no groq client"}
-    img_url = req.image_b64 if req.image_b64.startswith("data:image") else f"data:image/jpeg;base64,{req.image_b64}"
-    results = {}
-    for m in ["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"]:
-        try:
-            res = await client.chat.completions.create(
-                model=m,
-                messages=[{
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "What is in this image?"},
-                        {"type": "image_url", "image_url": {"url": img_url}}
-                    ]
-                }],
-                max_tokens=50
-            )
-            results[m] = {"success": True, "output": res.choices[0].message.content}
-        except Exception as e:
-            results[m] = {"success": False, "error": str(e)}
-    return results
 
 async def call_groq_vision(client, messages, response_format=None, max_tokens=250):
     last_err = None

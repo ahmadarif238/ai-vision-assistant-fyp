@@ -254,6 +254,7 @@ const appState = {
   isProcessingOCR: false,
   recognition: null,
   isAwaitingReply: false,
+  isAwaitingCloudReply: false,
   lastHazardStatus: 'SAFE',
   cloudIntervalId: null
 };
@@ -430,19 +431,22 @@ function setupCloudEdgeMode() {
 
   // Periodic REST frame analysis every 1.8s
   appState.cloudIntervalId = setInterval(async () => {
-    if (video.readyState !== 4 || appState.isProcessingOCR || appState.isListening) return;
+    if (video.readyState < 2 || !video.videoWidth || appState.isProcessingOCR || appState.isListening || appState.isAwaitingCloudReply) return;
+
+    if (!hiddenCanvas.width || hiddenCanvas.width !== video.videoWidth) {
+      hiddenCanvas.width = video.videoWidth;
+      hiddenCanvas.height = video.videoHeight;
+    }
 
     hiddenCtx.drawImage(video, 0, 0, hiddenCanvas.width, hiddenCanvas.height);
-    const b64 = hiddenCanvas.toDataURL('image/jpeg', 0.6);
+    const b64 = hiddenCanvas.toDataURL('image/jpeg', 0.65);
 
+    appState.isAwaitingCloudReply = true;
     try {
       const res = await fetch('/api/analyze-scene', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          image_b64: b64,
-          lang: 'en'
-        })
+        body: JSON.stringify({ image_b64: b64 })
       });
       if (res.ok) {
         const data = await res.json();
@@ -450,6 +454,8 @@ function setupCloudEdgeMode() {
       }
     } catch (e) {
       console.warn("Cloud analyze error:", e);
+    } finally {
+      appState.isAwaitingCloudReply = false;
     }
   }, 1800);
 }
@@ -480,9 +486,17 @@ function handleCloudResults(data) {
   if (isDanger) {
     const alertMsg = data.priority_alert || data.speech_text || "Obstacle ahead!";
     updateStatus('DANGER', "DANGER AHEAD", alertMsg);
-    audioCtrl.speak(alertMsg, true, 'cloud_hazard');
+    const hazardWord = extractHazardKeyword(alertMsg);
+    audioCtrl.speak(alertMsg, true, hazardWord);
+
+    // Draw hazard highlight border on canvas
+    ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = '#FF0033';
+    ctx.strokeRect(10, 10, overlayCanvas.width - 20, overlayCanvas.height - 20);
   } else {
     updateStatus('SAFE', "SAFE PATH", data.speech_text || "Forward corridor is clear to walk");
+    ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
   }
 }
 
@@ -501,7 +515,7 @@ function updateStatus(type, headline, subline) {
 
 function extractHazardKeyword(alertText) {
   const lower = alertText.toLowerCase();
-  for (const k of ['pothole', 'manhole', 'ditch', 'wire', 'step', 'stairs', 'motorcycle', 'car', 'chair', 'barrier']) {
+  for (const k of ['person', 'face', 'human', 'pothole', 'manhole', 'ditch', 'wire', 'step', 'stairs', 'motorcycle', 'car', 'vehicle', 'chair', 'barrier', 'wall']) {
     if (lower.includes(k)) return k;
   }
   return 'obstacle';
