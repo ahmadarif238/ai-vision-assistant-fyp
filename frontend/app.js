@@ -1,29 +1,32 @@
 /**
  * AI Vision Assistant 2026 - Ultra-Accessible Audio & UI Controller
- * Engineered specifically for Elderly and Visually Impaired Users (WCAG AAA)
- * Unlocks AudioContext & SpeechSynthesis on 1st tap, provides spatial sonar beeps,
- * prevents TTS queue corruption, and supports English/Urdu bilingual guidance.
+ * WCAG AAA Compliant Interface for Elderly and Visually Impaired Users
+ * Single-flight SpeechSynthesis, Web Audio API Sonar, Zero Audio Echo, 100% English.
  */
 
 // ============================================================================
-// 1. ROBUST AUDIO CONTROLLER
+// 1. ROBUST AUDIO CONTROLLER (Single-Flight, No Overlap, No Echo)
 // ============================================================================
 class AudioController {
   constructor() {
     this.audioCtx = null;
     this.unlocked = false;
-    this.speechSynth = window.speechSynthesis;
-    this.currentLang = 'en'; // 'en' or 'ur'
-    this.speechRate = 0.95; // Slower, highly legible pace for elderly ears
+    this.hasSpeechSynth = ('speechSynthesis' in window && window.speechSynthesis !== null);
+    this.speechSynth = this.hasSpeechSynth ? window.speechSynthesis : null;
+    this.voiceEnabled = true;
+    this.speechRate = 0.95; // Calm, clear tempo for elderly comprehension
     
-    // Cooldown management to prevent stuttering/queue jamming
-    this.lastHazardSpoken = {};
+    // Strict Deduplication & Concurrency Mutex
+    this.isSpeakingLock = false;
     this.lastSpokenText = '';
-    this.hazardCooldownMs = 3500; // 3.5-second strict cooldown per hazard type
-    this.isSpeaking = false;
-    this.fallbackPlayer = document.getElementById('fallbackAudioPlayer');
+    this.lastContentText = '';
+    this.lastSpokenTimestamp = 0;
+    this.lastHazardSpoken = {};
+    this.hazardCooldownMs = 3500; // 3.5s cooldown per unique hazard type
     
+    this.fallbackPlayer = document.getElementById('fallbackAudioPlayer');
     this.voices = [];
+
     if (this.speechSynth) {
       this.voices = this.speechSynth.getVoices();
       if (this.speechSynth.onvoiceschanged !== undefined) {
@@ -35,11 +38,12 @@ class AudioController {
   }
 
   /**
-   * Unlock Web Audio API context and SpeechSynthesis on first user touch.
-   * Completely resolves browser autoplay policy blocks.
+   * Unlocks Web Audio API and SpeechSynthesis on first user interaction.
+   * Silent unlock — does NOT speak any overlapping welcome text.
    */
   unlock() {
     if (this.unlocked) return;
+    this.unlocked = true;
 
     try {
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -50,40 +54,30 @@ class AudioController {
         this.audioCtx.resume();
       }
 
-      // Unlock SpeechSynthesis with an empty utterance
+      // Unlock Web Audio API with a soft low-volume chime
+      this.playTone(587.33, 40, 'sine', 0.05);
+
+      // Prime SpeechSynthesis with a zero-volume empty utterance
       if (this.speechSynth) {
-        const dummyUtterance = new SpeechSynthesisUtterance(' ');
-        dummyUtterance.volume = 0.01;
-        this.speechSynth.speak(dummyUtterance);
+        const silent = new SpeechSynthesisUtterance(' ');
+        silent.volume = 0;
+        this.speechSynth.speak(silent);
       }
 
-      this.unlocked = true;
-      console.log("[AudioController] AudioContext and SpeechSynthesis unlocked successfully.");
-
-      // Play pleasant startup chime
-      this.playTone(523.25, 100, 'sine'); // C5
-      setTimeout(() => this.playTone(659.25, 120, 'sine'), 110); // E5
-
-      // Dismiss overlay
       const overlay = document.getElementById('unlockOverlay');
       if (overlay) overlay.classList.add('dismissed');
 
-      // Announce initial status
-      const welcome = this.currentLang === 'ur' 
-        ? "ویژن اسسٹنٹ فعال ہے۔ کیمرہ اور آواز آن ہیں۔"
-        : "Vision Assistant active. Camera and sound are ready.";
-      this.speak(welcome, true);
-
+      console.log("[AudioController] Unlocked AudioContext & SpeechSynthesis successfully.");
     } catch (err) {
-      console.error("[AudioController] Unlock error:", err);
+      console.warn("[AudioController] Unlock error:", err);
     }
   }
 
   /**
    * Synthesize immediate hardware audio beeps using Web Audio API oscillator.
-   * Guaranteed to produce audio even if OS voices are unavailable.
    */
   playTone(frequency, durationMs, type = 'sine', volume = 0.35) {
+    if (!this.voiceEnabled) return;
     if (!this.audioCtx) {
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
       if (AudioContextClass) this.audioCtx = new AudioContextClass();
@@ -114,122 +108,118 @@ class AudioController {
     }
   }
 
-  // Touch confirmation chime
+  // Touch confirmation tone + vibration
   playTouchChime() {
-    this.playTone(587.33, 80, 'sine', 0.25); // D5
-    if (navigator.vibrate) navigator.vibrate(50);
+    this.playTone(587.33, 70, 'sine', 0.25);
+    if (navigator.vibrate) navigator.vibrate(40);
   }
 
   // Critical danger sonar (high-pitch dual chirp)
   playDangerChirp() {
-    this.playTone(880, 140, 'square', 0.4); // A5
-    setTimeout(() => this.playTone(1200, 180, 'square', 0.4), 150);
+    this.playTone(880, 130, 'square', 0.4);
+    setTimeout(() => this.playTone(1200, 160, 'square', 0.4), 140);
     if (navigator.vibrate) navigator.vibrate([200, 90, 200]);
   }
 
   // Caution ping (medium warm tone)
   playCautionPing() {
-    this.playTone(440, 160, 'sine', 0.3); // A4
-    if (navigator.vibrate) navigator.vibrate(100);
+    this.playTone(440, 150, 'sine', 0.3);
+    if (navigator.vibrate) navigator.vibrate(90);
   }
 
   /**
-   * Robust speech output with strict queue safety, cooldowns, and server fallback.
+   * Single-Flight Speech: Exclusively uses SpeechSynthesis when available.
+   * Completely avoids dual-engine echo.
    */
   speak(text, isPriority = false, hazardKey = null) {
-    if (!text || !text.trim()) return;
+    if (!this.voiceEnabled || !text || !text.trim()) return;
 
+    const cleanText = text.trim();
     const now = Date.now();
 
     // 1. Strict Hazard Cooldown (3.5s per hazard key)
     if (hazardKey) {
       const lastTime = this.lastHazardSpoken[hazardKey] || 0;
       if (now - lastTime < this.hazardCooldownMs) {
-        return; // Suppress repetitive chatter
+        return;
       }
       this.lastHazardSpoken[hazardKey] = now;
     }
 
-    // 2. Prevent repeating identical text too quickly
-    if (!isPriority && text === this.lastSpokenText && now - (this.lastHazardSpoken['generic'] || 0) < 4000) {
+    // 2. Exact Duplicate Suppression (4000ms window for identical message)
+    if (cleanText === this.lastSpokenText && (now - this.lastSpokenTimestamp) < 4000) {
       return;
     }
-    this.lastHazardSpoken['generic'] = now;
-    this.lastSpokenText = text;
 
-    // Update UI text bubble
+    // 3. Short Single-Flight Mutex (500ms lock between any speech calls to prevent overlapping calls)
+    if ((now - this.lastSpokenTimestamp) < 500) {
+      return;
+    }
+
+    this.lastSpokenText = cleanText;
+    if (!cleanText.startsWith("Repeating")) {
+      this.lastContentText = cleanText;
+    }
+    this.lastSpokenTimestamp = now;
+    this.isSpeakingLock = true;
+
+    // Update UI speech bubble text
     const bubbleText = document.getElementById('bubbleText');
-    if (bubbleText) bubbleText.textContent = text;
+    if (bubbleText) bubbleText.textContent = cleanText;
 
-    // 3. Audio Sonar Chimes
+    // Hardware Audio Sonar Chirp
     if (isPriority) {
       this.playDangerChirp();
     }
 
-    // 4. Client-side SpeechSynthesis Execution
-    if (this.speechSynth) {
-      // Safe interruption for priority alerts
-      if (isPriority && this.speechSynth.speaking) {
-        this.speechSynth.cancel();
-      }
-
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = this.speechRate;
-      utterance.pitch = 1.0;
-
-      // Select voice based on language
-      if (this.voices.length > 0) {
-        if (this.currentLang === 'ur') {
-          const urVoice = this.voices.find(v => v.lang.includes('ur') || v.lang.includes('hi'));
-          if (urVoice) utterance.voice = urVoice;
-        } else {
-          const enVoice = this.voices.find(v => v.lang.includes('en') && (v.name.includes('Natural') || v.name.includes('Google') || v.name.includes('Samantha')));
-          if (enVoice) utterance.voice = enVoice;
-        }
-      }
-
-      // Watchdog timeout to prevent frozen speech synthesis
-      let hasEnded = false;
-      const speechTimeout = setTimeout(() => {
-        if (!hasEnded && this.speechSynth.speaking) {
+    // 4. EXCLUSIVE ENGINE: If speechSynthesis exists in browser, use ONLY speechSynthesis
+    if (this.hasSpeechSynth) {
+      try {
+        if (isPriority && this.speechSynth.speaking) {
           this.speechSynth.cancel();
         }
-      }, 7000);
 
-      utterance.onend = () => {
-        hasEnded = true;
-        clearTimeout(speechTimeout);
-        this.isSpeaking = false;
-      };
+        const utterance = new SpeechSynthesisUtterance(cleanText);
+        utterance.rate = this.speechRate;
+        utterance.pitch = 1.0;
+        utterance.lang = 'en-US';
 
-      utterance.onerror = (e) => {
-        hasEnded = true;
-        clearTimeout(speechTimeout);
-        this.isSpeaking = false;
-        console.warn("[SpeechSynthesis] Error encountered. Invoking server TTS fallback.", e);
-        this._speakServerFallback(text);
-      };
+        if (this.voices.length > 0) {
+          const naturalVoice = this.voices.find(v => v.lang.includes('en') && (v.name.includes('Natural') || v.name.includes('Google') || v.name.includes('Samantha')));
+          if (naturalVoice) utterance.voice = naturalVoice;
+        }
 
-      try {
-        this.isSpeaking = true;
+        utterance.onend = () => {
+          this.isSpeakingLock = false;
+        };
+
+        utterance.onerror = (e) => {
+          this.isSpeakingLock = false;
+          // Interrupted or canceled events occur normally on cancel() — DO NOT trigger fallback!
+          if (e.error !== 'interrupted' && e.error !== 'canceled') {
+            console.warn("[SpeechSynthesis] Non-cancel error:", e.error);
+          }
+        };
+
         this.speechSynth.speak(utterance);
-        return;
+        return; // ALWAYS return here. Never execute server fallback.
       } catch (err) {
         console.warn("[SpeechSynthesis] Speak call failed:", err);
+        this.isSpeakingLock = false;
       }
     }
 
-    // 5. Server-side TTS Fallback (gTTS MP3 Stream)
-    this._speakServerFallback(text);
+    // 5. Server-side TTS Fallback: Executed ONLY if window.speechSynthesis is completely missing
+    this._speakServerFallback(cleanText);
   }
 
   _speakServerFallback(text) {
-    if (!this.fallbackPlayer) return;
+    if (!this.fallbackPlayer || this.hasSpeechSynth) return;
     try {
       fetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: text, lang: this.currentLang })
+        body: JSON.stringify({ text: text, lang: 'en' })
       })
       .then(res => {
         if (!res.ok) throw new Error("Server TTS unavailable");
@@ -247,51 +237,12 @@ class AudioController {
   }
 }
 
-// Global Audio Instance
+// Global Audio Controller Instance
 const audioCtrl = new AudioController();
+window.audioCtrl = audioCtrl;
 
 // ============================================================================
-// 2. BILINGUAL DICTIONARY & UI STRINGS
-// ============================================================================
-const STRINGS = {
-  en: {
-    lang_btn: "ENGLISH",
-    safe_headline: "SAFE PATH",
-    safe_sub: "Forward corridor is clear to walk",
-    danger_headline: "DANGER AHEAD",
-    danger_sub: "Obstacle or hazard in your walking path",
-    middle_title: "TAP TO SPEAK OR ASK",
-    middle_sub: "Touch anywhere here. I will listen and describe what is in front of you.",
-    ocr_title: "READ TEXT",
-    ocr_sub: "Street signs, bills, medicines",
-    repeat_title: "REPEAT SOUND",
-    repeat_sub: "Hear last message or check audio",
-    listening: "Listening for your question. Speak now...",
-    scanning: "Scanning text in front of you...",
-    speech_init: "Vision Assistant active. Path is clear.",
-    repeat_confirm: "Repeating last alert: "
-  },
-  ur: {
-    lang_btn: "اردو (URDU)",
-    safe_headline: "راستہ صاف ہے",
-    safe_sub: "سامنے کوئی رکاوٹ نہیں ہے",
-    danger_headline: "سامنے خطرہ ہے!",
-    danger_sub: "سامنے کھڈا یا رکاوٹ موجود ہے",
-    middle_title: "بولنے کے لیے دبائیں",
-    middle_sub: "یہاں ہاتھ لگائیں اور بولیں، میں سامنے کا منظر بتاؤں گا۔",
-    ocr_title: "تحریر پڑھیں",
-    ocr_sub: "بورڈ، کاغذ یا دوائی پڑھیں",
-    repeat_title: "آواز سنیں",
-    repeat_sub: "آخری پیغام دوبارہ سنیں",
-    listening: "میں سن رہا ہوں، اپنا سوال پوچھیں۔",
-    scanning: "سامنے موجود تحریر پڑھی جا رہی ہے...",
-    speech_init: "ویژن اسسٹنٹ آن ہے۔ راستہ صاف ہے۔",
-    repeat_confirm: "آخری پیغام: "
-  }
-};
-
-// ============================================================================
-// 3. APPLICATION STATE & DOM REFERENCES
+// 2. APPLICATION STATE & DOM REFERENCES
 // ============================================================================
 const appState = {
   isCloudMode: window.location.hostname.includes('vercel.app') || window.location.port === '',
@@ -303,7 +254,8 @@ const appState = {
   isProcessingOCR: false,
   recognition: null,
   isAwaitingReply: false,
-  lastHazardStatus: 'SAFE'
+  lastHazardStatus: 'SAFE',
+  cloudIntervalId: null
 };
 
 const video = document.getElementById('cameraFeed');
@@ -317,8 +269,8 @@ const statusSymbol = document.getElementById('statusSymbol');
 const statusHeadline = document.getElementById('statusHeadline');
 const statusSubline = document.getElementById('statusSubline');
 
-const langToggleBtn = document.getElementById('langToggleBtn');
-const langLabel = document.getElementById('langLabel');
+const voiceToggleBtn = document.getElementById('voiceToggleBtn');
+const voiceLabel = document.getElementById('voiceLabel');
 const modePill = document.getElementById('modePill');
 const engineBadge = document.getElementById('engineBadge');
 const flipCamBtn = document.getElementById('flipCamBtn');
@@ -337,7 +289,7 @@ const repeatTitle = document.getElementById('repeatTitle');
 const repeatSub = document.getElementById('repeatSub');
 
 // ============================================================================
-// 4. CAMERA INITIALIZATION (WebRTC)
+// 3. WEBRTC CAMERA INITIALIZATION
 // ============================================================================
 async function initCamera() {
   if (appState.cameraStream) {
@@ -364,21 +316,37 @@ async function initCamera() {
     };
   } catch (err) {
     console.warn("[Camera] Camera access error:", err);
-    updateStatus('DANGER', "Camera access required", "Please allow camera access.");
+    updateStatus('DANGER', "Camera Required", "Please allow camera permissions in your browser.");
   }
 }
 
+// Flip Camera (Front / Rear)
 flipCamBtn.addEventListener('click', (e) => {
   e.stopPropagation();
   audioCtrl.unlock();
   audioCtrl.playTouchChime();
   appState.facingMode = appState.facingMode === 'environment' ? 'user' : 'environment';
   initCamera();
-  audioCtrl.speak(audioCtrl.currentLang === 'ur' ? "کیمرہ تبدیل کر دیا گیا۔" : "Camera flipped.", true);
+  audioCtrl.speak("Camera flipped", true);
+});
+
+// Voice Toggle (Mute / Unmute)
+voiceToggleBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  audioCtrl.unlock();
+  audioCtrl.voiceEnabled = !audioCtrl.voiceEnabled;
+  voiceToggleBtn.classList.toggle('muted', !audioCtrl.voiceEnabled);
+  voiceLabel.textContent = audioCtrl.voiceEnabled ? "VOICE ON" : "VOICE OFF";
+  audioCtrl.playTouchChime();
+  if (audioCtrl.voiceEnabled) {
+    audioCtrl.speak("Voice guidance enabled", true);
+  } else {
+    if (audioCtrl.speechSynth) audioCtrl.speechSynth.cancel();
+  }
 });
 
 // ============================================================================
-// 5. HYBRID BACKEND CONNECTION (Local WebSocket vs Cloud Vercel REST)
+// 4. HYBRID BACKEND CONNECTION (Local WebSocket vs Cloud Vercel REST)
 // ============================================================================
 function initBackendConnection() {
   if (appState.isCloudMode) {
@@ -400,6 +368,11 @@ function setupLocalWebSocketMode() {
     appState.ws.onopen = () => {
       appState.wsConnected = true;
       console.log("[WebSocket] Connected to local OpenVINO backend.");
+      // Ensure cloud interval is stopped
+      if (appState.cloudIntervalId) {
+        clearInterval(appState.cloudIntervalId);
+        appState.cloudIntervalId = null;
+      }
       startLocalStreamingLoop();
     };
 
@@ -449,8 +422,14 @@ function setupCloudEdgeMode() {
   engineBadge.textContent = "☁️ CLOUD EDGE (VERCEL + GROQ)";
   console.log("[CloudMode] Running on Vercel Serverless Architecture.");
 
-  // Periodic REST frame analysis every 1.6s
-  setInterval(async () => {
+  // Prevent multiple overlapping intervals
+  if (appState.cloudIntervalId) {
+    clearInterval(appState.cloudIntervalId);
+    appState.cloudIntervalId = null;
+  }
+
+  // Periodic REST frame analysis every 1.8s
+  appState.cloudIntervalId = setInterval(async () => {
     if (video.readyState !== 4 || appState.isProcessingOCR || appState.isListening) return;
 
     hiddenCtx.drawImage(video, 0, 0, hiddenCanvas.width, hiddenCanvas.height);
@@ -462,7 +441,7 @@ function setupCloudEdgeMode() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           image_b64: b64,
-          lang: audioCtrl.currentLang
+          lang: 'en'
         })
       });
       if (res.ok) {
@@ -472,25 +451,24 @@ function setupCloudEdgeMode() {
     } catch (e) {
       console.warn("Cloud analyze error:", e);
     }
-  }, 1600);
+  }, 1800);
 }
 
 // ============================================================================
-// 6. DETECTION & HAZARD HANDLING
+// 5. DETECTION & HAZARD HANDLING
 // ============================================================================
 function handleDetectionResults(data) {
   const isDanger = data.has_critical_hazard || Boolean(data.priority_alert);
-  const statusType = isDanger ? 'DANGER' : 'SAFE';
 
   if (isDanger) {
     const alertMsg = data.priority_alert || "Obstacle detected ahead!";
-    updateStatus('DANGER', STRINGS[audioCtrl.currentLang].danger_headline, alertMsg);
+    updateStatus('DANGER', "DANGER AHEAD", alertMsg);
     
     // Announce with strict 3.5s cooldown
     const hazardWord = extractHazardKeyword(alertMsg);
-    audioCtrl.speak(translateHazardAlert(alertMsg), true, hazardWord);
+    audioCtrl.speak(alertMsg, true, hazardWord);
   } else {
-    updateStatus('SAFE', STRINGS[audioCtrl.currentLang].safe_headline, STRINGS[audioCtrl.currentLang].safe_sub);
+    updateStatus('SAFE', "SAFE PATH", "Forward corridor is clear to walk");
   }
 
   // Draw overlay bounding boxes
@@ -500,10 +478,11 @@ function handleDetectionResults(data) {
 function handleCloudResults(data) {
   const isDanger = data.status === 'DANGER' || Boolean(data.priority_alert);
   if (isDanger) {
-    updateStatus('DANGER', STRINGS[audioCtrl.currentLang].danger_headline, data.priority_alert || "Hazard ahead");
-    audioCtrl.speak(data.speech_text || data.priority_alert, true, 'cloud_hazard');
+    const alertMsg = data.priority_alert || data.speech_text || "Obstacle ahead!";
+    updateStatus('DANGER', "DANGER AHEAD", alertMsg);
+    audioCtrl.speak(alertMsg, true, 'cloud_hazard');
   } else {
-    updateStatus('SAFE', STRINGS[audioCtrl.currentLang].safe_headline, data.speech_text || STRINGS[audioCtrl.currentLang].safe_sub);
+    updateStatus('SAFE', "SAFE PATH", data.speech_text || "Forward corridor is clear to walk");
   }
 }
 
@@ -522,27 +501,10 @@ function updateStatus(type, headline, subline) {
 
 function extractHazardKeyword(alertText) {
   const lower = alertText.toLowerCase();
-  for (const k of ['pothole', 'manhole', 'ditch', 'wire', 'step', 'motorcycle', 'car', 'chair']) {
+  for (const k of ['pothole', 'manhole', 'ditch', 'wire', 'step', 'stairs', 'motorcycle', 'car', 'chair', 'barrier']) {
     if (lower.includes(k)) return k;
   }
   return 'obstacle';
-}
-
-function translateHazardAlert(alertText) {
-  if (audioCtrl.currentLang !== 'ur') return alertText;
-
-  const lower = alertText.toLowerCase();
-  if (lower.includes('pothole') || lower.includes('ditch')) {
-    return "خبردار! آگے کھڈا یا گڑھا ہے۔ رک جائیں۔";
-  } else if (lower.includes('wire')) {
-    return "دھیان دیجیے! سامنے تار ہے۔";
-  } else if (lower.includes('motorcycle')) {
-    return "خبردار! موٹر سائیکل آ رہی ہے۔";
-  } else if (lower.includes('step') || lower.includes('stairs')) {
-    return "احتیاط! آگے سیڑھیاں یا اونچ نیچ ہے۔";
-  } else {
-    return "خبردار! سامنے رکاوٹ ہے۔ رک جائیں۔";
-  }
 }
 
 function drawBoundingBoxes(detections) {
@@ -557,11 +519,11 @@ function drawBoundingBoxes(detections) {
 }
 
 // ============================================================================
-// 7. TOUCH ZONES INTERACTIONS (WCAG AAA - Huge Tap Targets)
+// 6. TOUCH ZONES INTERACTIONS (Single Event Binding, Zero Overlap)
 // ============================================================================
 
-// Global screen unlock on ANY initial interaction
-document.addEventListener('pointerdown', () => audioCtrl.unlock(), { once: true });
+// Single global unlock listener
+window.addEventListener('click', () => audioCtrl.unlock(), { once: true });
 
 // ZONE 2: MIDDLE ZONE (Tap to speak / ask question)
 zoneMiddle.addEventListener('click', () => {
@@ -570,7 +532,9 @@ zoneMiddle.addEventListener('click', () => {
 
   if (appState.isListening) {
     stopListening();
+    audioCtrl.speak("Listening stopped.", true);
   } else {
+    audioCtrl.speak("Listening. Ask a question or explore the scene.", true);
     startListening();
   }
 });
@@ -580,8 +544,7 @@ btnOcr.addEventListener('click', async () => {
   audioCtrl.unlock();
   audioCtrl.playTouchChime();
 
-  const scanMsg = STRINGS[audioCtrl.currentLang].scanning;
-  audioCtrl.speak(scanMsg, true);
+  audioCtrl.speak("Scanning text in front of you...", true);
 
   appState.isProcessingOCR = true;
   hiddenCtx.drawImage(video, 0, 0, hiddenCanvas.width, hiddenCanvas.height);
@@ -591,16 +554,16 @@ btnOcr.addEventListener('click', async () => {
     const res = await fetch('/api/ocr/frame', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image_b64: snapshotB64, lang: audioCtrl.currentLang })
+      body: JSON.stringify({ image_b64: snapshotB64, lang: 'en' })
     });
     const data = await res.json();
     appState.isProcessingOCR = false;
 
-    const speechResult = data.summary || data.text || "No text visible in front of camera.";
+    const speechResult = data.summary || data.text || "No readable text visible in camera view.";
     audioCtrl.speak(speechResult, true);
   } catch (e) {
     appState.isProcessingOCR = false;
-    audioCtrl.speak(audioCtrl.currentLang === 'ur' ? "تحریر پڑھنے میں رکاوٹ آئی ہے۔ دوبارہ کوشش کریں۔" : "Could not read text. Please hold steady and try again.", true);
+    audioCtrl.speak("Could not read text. Please hold steady and try again.", true);
   }
 });
 
@@ -609,68 +572,34 @@ btnRepeat.addEventListener('click', () => {
   audioCtrl.unlock();
   audioCtrl.playTouchChime();
 
-  if (audioCtrl.lastSpokenText) {
-    const prefix = STRINGS[audioCtrl.currentLang].repeat_confirm;
-    audioCtrl.speak(prefix + audioCtrl.lastSpokenText, true);
+  const msg = audioCtrl.lastContentText || audioCtrl.lastSpokenText;
+  if (msg) {
+    audioCtrl.speak("Repeating: " + msg, true);
   } else {
     audioCtrl.playDangerChirp();
-    const testMsg = audioCtrl.currentLang === 'ur' ? "آڈیو سسٹم بالکل ٹھیک کام کر رہا ہے۔" : "Sound system is working perfectly.";
-    audioCtrl.speak(testMsg, true);
+    audioCtrl.speak("Sound system is active and working properly.", true);
   }
 });
 
 // ============================================================================
-// 8. BILINGUAL SUPPORT TOGGLE (English / Urdu)
-// ============================================================================
-langToggleBtn.addEventListener('click', (e) => {
-  e.stopPropagation();
-  audioCtrl.unlock();
-  audioCtrl.playTouchChime();
-
-  audioCtrl.currentLang = audioCtrl.currentLang === 'en' ? 'ur' : 'en';
-  applyLanguage(audioCtrl.currentLang);
-});
-
-function applyLanguage(lang) {
-  const s = STRINGS[lang];
-  langLabel.textContent = s.lang_btn;
-  middleTitle.textContent = s.middle_title;
-  middleSubtext.textContent = s.middle_sub;
-  ocrTitle.textContent = s.ocr_title;
-  ocrSub.textContent = s.ocr_sub;
-  repeatTitle.textContent = s.repeat_title;
-  repeatSub.textContent = s.repeat_sub;
-
-  if (appState.lastHazardStatus === 'SAFE') {
-    statusHeadline.textContent = s.safe_headline;
-    statusSubline.textContent = s.safe_sub;
-  } else {
-    statusHeadline.textContent = s.danger_headline;
-  }
-
-  const switchMsg = lang === 'ur' ? "اردو آواز منتخب ہو چکی ہے۔" : "English voice activated.";
-  audioCtrl.speak(switchMsg, true);
-}
-
-// ============================================================================
-// 9. SPEECH RECOGNITION (Voice Command & Multimodal Groq Vision)
+// 7. SPEECH RECOGNITION (Voice Command & Multimodal Groq Vision)
 // ============================================================================
 function initSpeechRecognition() {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SpeechRecognition) {
-    console.warn("Speech recognition not natively supported on this browser.");
+    console.warn("Speech recognition not supported on this browser.");
     return;
   }
 
   appState.recognition = new SpeechRecognition();
   appState.recognition.continuous = false;
   appState.recognition.interimResults = false;
-  appState.recognition.lang = audioCtrl.currentLang === 'ur' ? 'ur-PK' : 'en-US';
+  appState.recognition.lang = 'en-US';
 
   appState.recognition.onstart = () => {
     appState.isListening = true;
     middleCard.classList.add('listening');
-    middleTitle.textContent = audioCtrl.currentLang === 'ur' ? "سن رہا ہوں..." : "LISTENING...";
+    middleTitle.textContent = "LISTENING...";
     if (navigator.vibrate) navigator.vibrate(60);
   };
 
@@ -679,8 +608,7 @@ function initSpeechRecognition() {
     stopListening();
     console.log("[STT Heard]:", transcript);
 
-    // Multimodal Query to Groq Vision
-    audioCtrl.speak(audioCtrl.currentLang === 'ur' ? "منظر کا جائزہ لیا جا رہا ہے..." : "Checking the scene for you...", true);
+    audioCtrl.speak("Checking scene for you...", true);
 
     hiddenCtx.drawImage(video, 0, 0, hiddenCanvas.width, hiddenCanvas.height);
     const frameSnapshot = hiddenCanvas.toDataURL('image/jpeg', 0.85);
@@ -692,13 +620,13 @@ function initSpeechRecognition() {
         body: JSON.stringify({
           query: transcript,
           image_b64: frameSnapshot,
-          lang: audioCtrl.currentLang
+          lang: 'en'
         })
       });
       const data = await res.json();
       audioCtrl.speak(data.reply, true);
     } catch (e) {
-      audioCtrl.speak(audioCtrl.currentLang === 'ur' ? "سروس سے رابطہ نہیں ہو سکا۔ راستہ صاف ہے۔" : "Could not connect to vision assistant. Path is clear.", true);
+      audioCtrl.speak("Could not connect to vision assistant. Path is clear.", true);
     }
   };
 
@@ -709,7 +637,7 @@ function initSpeechRecognition() {
 function startListening() {
   if (appState.recognition && !appState.isListening) {
     try {
-      appState.recognition.lang = audioCtrl.currentLang === 'ur' ? 'ur-PK' : 'en-US';
+      appState.recognition.lang = 'en-US';
       appState.recognition.start();
     } catch (e) {
       console.warn("Recognition error:", e);
@@ -720,11 +648,11 @@ function startListening() {
 function stopListening() {
   appState.isListening = false;
   middleCard.classList.remove('listening');
-  middleTitle.textContent = STRINGS[audioCtrl.currentLang].middle_title;
+  middleTitle.textContent = "TAP TO SPEAK OR ASK";
 }
 
 // ============================================================================
-// 10. SYSTEM BOOTSTRAP
+// 8. SYSTEM BOOTSTRAP
 // ============================================================================
 window.addEventListener('DOMContentLoaded', () => {
   initCamera();

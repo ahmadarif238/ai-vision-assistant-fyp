@@ -9,6 +9,9 @@ import sys
 import uvicorn
 from backend.core.config import settings
 
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+
 def get_local_ip() -> str:
     """Detect LAN IP address so smartphones on the same WiFi can connect"""
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -27,12 +30,12 @@ def main():
     port = settings.PORT
 
     print("\n" + "=" * 70)
-    print(" 🚀 AI VISION ASSISTANT FOR THE VISUALLY IMPAIRED (2026 SOTA)")
+    print(" [*] AI VISION ASSISTANT FOR THE VISUALLY IMPAIRED (2026 SOTA)")
     print("=" * 70)
-    print(f" ▶ Local Web Access:    http://localhost:{port}")
-    print(f" ▶ Smartphone LAN PWA:  http://{local_ip}:{port}")
+    print(f" > Local Web Access:    http://localhost:{port}")
+    print(f" > Smartphone LAN PWA:  http://{local_ip}:{port}")
     print("=" * 70)
-    print(" 💡 Smartphone Tip:")
+    print(" Tip:")
     print(f"    Connect your phone to the same WiFi and open http://{local_ip}:{port}")
     print("    Tap 'Add to Home Screen' in Chrome or Safari for full-screen PWA.")
     print("=" * 70 + "\n")

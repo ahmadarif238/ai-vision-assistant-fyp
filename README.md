@@ -56,7 +56,7 @@ Designed specifically for elderly and low-vision users, replacing standard devel
 1. **Zero Small Buttons**: Entire screen consists of three giant tap targets.
 2. **Audio & Haptic Feedback on Every Tap**: Every touch plays a 587Hz confirmation chime, vibrates the device (`navigator.vibrate`), and announces the action out loud.
 3. **Hardware Web Audio Sonar**: High-pitch dual chirp (880Hz / 1200Hz) for danger and 440Hz ping for caution that always plays even if OS speech voices lag.
-4. **Bilingual Support (English & Urdu)**: One-tap toggle between clear English (rate: 0.95) and natural Roman/Urdu voice prompts (e.g., *"Rasta saaf hai"*, *"Khabardar! Samnay khadda hai"*).
+4. **100% Global English Speech Engine**: Clear, natural English voice prompts (rate: 0.95) with single-flight mutex lock, exact duplicate suppression, and zero echo.
 5. **No Audio Queue Corruption**: Strict 3.5-second hazard cooldown and automatic server-side fallback (`/api/tts`) if browser TTS voices are unavailable.
 
 ---

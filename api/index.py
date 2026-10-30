@@ -1,15 +1,15 @@
 """
 Vercel Serverless Entrypoint for AI Vision Assistant (2026)
-Optimized for Vercel Python runtime: lightweight, stateless, sub-15s cold starts.
+Optimized for Vercel Python runtime: lightweight, stateless, 100% English.
 """
 
 import os
 import io
+import json
 import base64
 from typing import Optional
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response, JSONResponse
 from pydantic import BaseModel
 from groq import AsyncGroq
 from gtts import gTTS
@@ -37,16 +37,13 @@ def get_groq_client():
 class SceneRequest(BaseModel):
     image_b64: str
     query: Optional[str] = None
-    lang: Optional[str] = "en"  # "en" or "ur"
 
 class TTSRequest(BaseModel):
     text: str
-    lang: Optional[str] = "en"
 
 class ChatRequest(BaseModel):
     query: str
     image_b64: Optional[str] = None
-    lang: Optional[str] = "en"
 
 @app.get("/api/health")
 async def health():
@@ -61,42 +58,29 @@ async def health():
 async def analyze_scene(req: SceneRequest):
     """
     Multimodal scene hazard analysis for Vercel Cloud Edge mode.
-    Evaluates image and returns safe/danger status, priority alerts, and scene description.
+    Evaluates image and returns safe/danger status, priority alerts, and scene description in English.
     """
     client = get_groq_client()
-    lang = req.lang or "en"
-    is_urdu = lang == "ur"
 
     if not client:
-        # Heuristic fallback
-        if is_urdu:
-            return {
-                "status": "SAFE",
-                "priority_alert": None,
-                "scene_description": "راستہ صاف معلوم ہوتا ہے۔ احتیاط سے چلیں۔",
-                "speech_text": "راستہ صاف ہے۔ احتیاط سے قدم بڑھائیں۔"
-            }
-        else:
-            return {
-                "status": "SAFE",
-                "priority_alert": None,
-                "scene_description": "Forward path appears clear. Proceed with care.",
-                "speech_text": "Forward path is clear."
-            }
+        return {
+            "status": "SAFE",
+            "priority_alert": None,
+            "scene_description": "Forward path appears clear. Proceed with care.",
+            "speech_text": "Forward path is clear."
+        }
 
     system_prompt = (
-        "You are an AI Vision Assistant for a visually impaired or elderly person in Pakistan. "
-        "Analyze the camera view for hazards: potholes, open ditches, steep steps, loose wires, motorcycles, vehicles, or barriers. "
-        "Respond in JSON format with exact keys:\n"
+        "You are an AI Vision Assistant for a visually impaired or elderly person. "
+        "Analyze the camera view for hazards: potholes, open ditches, steep steps, loose wires, vehicles, or barriers. "
+        "Respond strictly in JSON format with exact keys:\n"
         "{\n"
         '  "status": "SAFE" or "DANGER",\n'
         '  "priority_alert": "Short urgent warning if hazard exists else null",\n'
         '  "scene_description": "2 sentences describing the forward path and surroundings",\n'
-        '  "speech_text": "Concise text to speak out loud"\n'
+        '  "speech_text": "Concise text to speak out loud in English"\n'
         "}\n"
     )
-    if is_urdu:
-        system_prompt += "Write all fields in clear Roman Urdu or simple Urdu so an elderly Pakistani user understands immediately."
 
     img_url = req.image_b64 if req.image_b64.startswith("data:image") else f"data:image/jpeg;base64,{req.image_b64}"
 
@@ -117,41 +101,35 @@ async def analyze_scene(req: SceneRequest):
             max_tokens=200,
             temperature=0.2
         )
-        import json
         res_json = json.loads(response.choices[0].message.content)
         return res_json
     except Exception as e:
         print(f"[Vercel analyze-scene Error]: {e}")
-        # Graceful fallback
         return {
             "status": "SAFE",
             "priority_alert": None,
-            "scene_description": "Camera monitoring active. Forward corridor is being tracked." if not is_urdu else "کیمرہ فعال ہے۔ سامنے کے راستے کی نگرانی ہو رہی ہے۔",
-            "speech_text": "Path monitored." if not is_urdu else "راستہ مانیٹر ہو رہا ہے۔"
+            "scene_description": "Camera monitoring active. Forward corridor is being tracked.",
+            "speech_text": "Path monitored."
         }
 
 @app.post("/api/ocr")
 @app.post("/api/ocr/frame")
 async def ocr_read(req: SceneRequest):
-    """Multimodal text reading for documents and street signs"""
+    """Multimodal text reading for documents and street signs in English"""
     client = get_groq_client()
-    lang = req.lang or "en"
-    is_urdu = lang == "ur"
 
     if not client:
         return {
             "success": True,
             "text": "Notice / Document detected.",
-            "summary": "Document detected. Please connect Groq API key in Settings for full reading." if not is_urdu else "دستاویز نظر آئی ہے۔ تفصیلی پڑھائی کے لیے سیٹنگز چیک کریں۔"
+            "summary": "Document detected. Please connect Groq API key in Settings for full reading."
         }
 
     prompt = (
         "Transcribe all readable text from this image accurately. "
-        "Then provide a 1-sentence plain summary suitable for read-aloud audio to a visually impaired person. "
+        "Then provide a 1-sentence plain summary in English suitable for read-aloud audio to a visually impaired person. "
         "Return JSON with keys: 'text', 'summary'."
     )
-    if is_urdu:
-        prompt += " Provide the summary in simple Urdu / Roman Urdu."
 
     img_url = req.image_b64 if req.image_b64.startswith("data:image") else f"data:image/jpeg;base64,{req.image_b64}"
 
@@ -172,27 +150,22 @@ async def ocr_read(req: SceneRequest):
             max_tokens=300,
             temperature=0.1
         )
-        import json
         return json.loads(response.choices[0].message.content)
     except Exception as e:
         return {"success": False, "error": str(e), "summary": "Text reading encountered an issue."}
 
 @app.post("/api/chat/multimodal")
 async def chat_multimodal(req: ChatRequest):
-    """Conversational question answering with image context"""
+    """Conversational question answering with image context in English"""
     client = get_groq_client()
-    lang = req.lang or "en"
-    is_urdu = lang == "ur"
 
     if not client:
         return {
             "query": req.query,
-            "reply": "I see your surroundings. The path ahead is open." if not is_urdu else "میں آپ کے ارد گرد دیکھ رہا ہوں۔ سامنے کا راستہ کھلا ہے۔"
+            "reply": "I see your surroundings. The path ahead is open."
         }
 
-    system = "You are an assistive vision companion for an elderly or blind person. Be concise, direct, helpful, and under 2 sentences."
-    if is_urdu:
-        system += " Answer in gentle, clear Urdu or Roman Urdu."
+    system = "You are an assistive vision companion for an elderly or blind person. Be concise, direct, helpful, and under 2 sentences in clear English."
 
     messages = [{"role": "system", "content": system}]
     if req.image_b64:
@@ -220,10 +193,9 @@ async def chat_multimodal(req: ChatRequest):
 
 @app.post("/api/tts")
 async def tts_fallback(req: TTSRequest):
-    """Server-side TTS audio fallback returning MP3 audio stream"""
+    """Server-side TTS audio fallback returning MP3 audio stream in English"""
     try:
-        t_lang = "ur" if req.lang == "ur" else "en"
-        tts = gTTS(text=req.text, lang=t_lang, slow=True)
+        tts = gTTS(text=req.text, lang="en", slow=False)
         buf = io.BytesIO()
         tts.write_to_fp(buf)
         buf.seek(0)

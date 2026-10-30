@@ -110,8 +110,7 @@ async def server_tts(req: TTSQuery):
         from gtts import gTTS
         import io
         from fastapi.responses import Response
-        t_lang = "ur" if req.lang == "ur" else "en"
-        tts = gTTS(text=req.text, lang=t_lang, slow=True)
+        tts = gTTS(text=req.text, lang="en", slow=False)
         buf = io.BytesIO()
         tts.write_to_fp(buf)
         buf.seek(0)
@@ -133,15 +132,7 @@ async def analyze_scene_api(req: SceneAnalysisQuery):
     
     status = "DANGER" if hazard_res["has_critical_hazard"] else "SAFE"
     alert = hazard_res["priority_alert"] or (depth_res.get("depth_alert") if depth_res else None)
-    
-    is_urdu = req.lang == "ur"
-    if is_urdu:
-        if status == "DANGER":
-            speech = f"خطرہ! {alert or 'سامنے رکاوٹ ہے، رک جائیں۔'}"
-        else:
-            speech = "راستہ صاف ہے۔ آپ آگے بڑھ سکتے ہیں۔"
-    else:
-        speech = alert if alert else hazard_res["scene_description"]
+    speech = alert if alert else hazard_res["scene_description"]
         
     return {
         "status": status,

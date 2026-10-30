@@ -85,6 +85,12 @@ html, body {
   transform: scale(0.96);
 }
 
+.voice-btn.muted {
+  border-color: #7A8194;
+  color: #7A8194;
+  background-color: #161822;
+}
+
 .mode-pill {
   display: flex;
   align-items: center;

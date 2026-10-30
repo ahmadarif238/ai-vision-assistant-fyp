@@ -49,3 +49,4 @@ model.export(format='onnx', imgsz=320)
 ## 3. Vercel Cloud Edge Deployment
 
 When deployed to Vercel (`https://...vercel.app`), the application automatically activates **Cloud Edge Mode**. It offloads visual hazard detection and document OCR to **Groq Multimodal Cloud Vision (Llama 4 Scout / 3.2 Vision)**, requiring zero local model weights on Vercel's serverless infrastructure.
+
