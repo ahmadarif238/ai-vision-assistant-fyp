@@ -63,17 +63,30 @@ async def health():
         "vision_candidates": VISION_CANDIDATE_MODELS
     }
 
-@app.get("/api/groq-models")
-async def list_groq_models():
-    """Diagnostic endpoint to inspect live supported models on Groq"""
+@app.post("/api/debug-model")
+async def debug_model(req: SceneRequest):
     client = get_groq_client()
     if not client:
-        return {"error": "Groq client not configured"}
-    try:
-        models = await client.models.list()
-        return {"models": [m.id for m in models.data]}
-    except Exception as e:
-        return {"error": str(e)}
+        return {"error": "no groq client"}
+    img_url = req.image_b64 if req.image_b64.startswith("data:image") else f"data:image/jpeg;base64,{req.image_b64}"
+    results = {}
+    for m in ["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"]:
+        try:
+            res = await client.chat.completions.create(
+                model=m,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "What is in this image?"},
+                        {"type": "image_url", "image_url": {"url": img_url}}
+                    ]
+                }],
+                max_tokens=50
+            )
+            results[m] = {"success": True, "output": res.choices[0].message.content}
+        except Exception as e:
+            results[m] = {"success": False, "error": str(e)}
+    return results
 
 async def call_groq_vision(client, messages, response_format=None, max_tokens=250):
     last_err = None
