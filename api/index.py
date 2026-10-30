@@ -101,15 +101,26 @@ async def analyze_scene(req: SceneRequest):
         }
 
     system_prompt = (
-        "You are an AI Vision Assistant for a visually impaired or elderly person. "
-        "Analyze the camera view for hazards: people, faces, obstacles, potholes, open ditches, steep steps, loose wires, vehicles, or barriers. "
-        "If a person or face or obstacle is visible, warn the user. "
+        "You are an AI Object Detection and Walking Assistant for the visually impaired. "
+        "Analyze the camera view carefully. Identify all visible objects, people, hazards, and obstacles (e.g. person, chair, cell phone, bottle, cup, laptop, car, door, steps, wall). "
+        "Estimate the walking corridor (left, center, or right) and proximity (very close, close, or ahead) for each object. "
         "Respond strictly in JSON format with exact keys:\n"
         "{\n"
         '  "status": "SAFE" or "DANGER",\n'
-        '  "priority_alert": "Short urgent warning if hazard or person exists else null",\n'
-        '  "scene_description": "2 sentences describing the forward path and surroundings",\n'
-        '  "speech_text": "Concise text to speak out loud in English"\n'
+        '  "priority_alert": "Short urgent warning if hazard or person exists directly ahead, else null",\n'
+        '  "detected_objects": ["person", "chair", "cell phone"],\n'
+        '  "detections": [\n'
+        '    {\n'
+        '      "label": "person",\n'
+        '      "conf": 0.95,\n'
+        '      "corridor": "center",\n'
+        '      "proximity": "very close",\n'
+        '      "is_critical": true,\n'
+        '      "bbox": [100, 150, 800, 750]\n'
+        '    }\n'
+        '  ],\n'
+        '  "scene_description": "2 sentences describing surroundings and forward path",\n'
+        '  "speech_text": "Natural spoken sentence listing detected objects and navigation advice"\n'
         "}\n"
     )
 
@@ -130,7 +141,7 @@ async def analyze_scene(req: SceneRequest):
             client,
             messages=messages,
             response_format={"type": "json_object"},
-            max_tokens=200
+            max_tokens=350
         )
         res_json = json.loads(response.choices[0].message.content)
         res_json["used_model"] = used_model

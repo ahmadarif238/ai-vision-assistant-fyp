@@ -260,7 +260,7 @@ class ClientObjectDetector {
     const tryLoad = async () => {
       if (typeof cocoSsd !== 'undefined') {
         try {
-          this.model = await cocoSsd.load({ base: 'mobilenet_v2' });
+          this.model = await cocoSsd.load();
           this.isReady = true;
           this.isLoading = false;
           console.log("[ClientDetector] Real-time COCO-SSD model ready in browser!");
@@ -624,20 +624,36 @@ function handleDetectionResults(data) {
 
 function handleCloudResults(data) {
   const isDanger = data.status === 'DANGER' || Boolean(data.priority_alert);
+  const alertMsg = data.priority_alert || data.speech_text || (isDanger ? "Obstacle ahead!" : "Forward corridor is clear");
+
   if (isDanger) {
-    const alertMsg = data.priority_alert || data.speech_text || "Obstacle ahead!";
     updateStatus('DANGER', "DANGER AHEAD", alertMsg);
     const hazardWord = extractHazardKeyword(alertMsg);
     audioCtrl.speak(alertMsg, true, hazardWord);
-
-    // Draw hazard highlight border on canvas
-    ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
-    ctx.lineWidth = 6;
-    ctx.strokeStyle = '#FF0033';
-    ctx.strokeRect(10, 10, overlayCanvas.width - 20, overlayCanvas.height - 20);
   } else {
-    updateStatus('SAFE', "SAFE PATH", data.speech_text || "Forward corridor is clear to walk");
-    ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+    // Only update to SAFE if clientDetector has not flagged an immediate critical danger
+    if (!clientDetector.isReady || appState.lastHazardStatus !== 'DANGER') {
+      updateStatus('SAFE', "SAFE PATH", alertMsg);
+    }
+  }
+
+  // Draw detections if provided by cloud model and clientDetector is not already drawing at 30 FPS
+  if (data.detections && data.detections.length > 0 && !clientDetector.isReady) {
+    const formatted = data.detections.map(d => {
+      let [y1, x1, y2, x2] = d.bbox || [0, 0, 0, 0];
+      const scaleX = overlayCanvas.width / 1000;
+      const scaleY = overlayCanvas.height / 1000;
+      return {
+        bbox: [x1 * scaleX, y1 * scaleY, (x2 - x1) * scaleX, (y2 - y1) * scaleY],
+        is_xywh: true,
+        label: d.label || 'object',
+        conf: d.conf || 0.9,
+        corridor: d.corridor || 'center',
+        proximity: d.proximity || 'ahead',
+        is_critical: d.is_critical || isDanger
+      };
+    });
+    drawBoundingBoxes(formatted);
   }
 }
 
