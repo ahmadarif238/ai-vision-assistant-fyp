@@ -242,6 +242,147 @@ const audioCtrl = new AudioController();
 window.audioCtrl = audioCtrl;
 
 // ============================================================================
+// 1B. CLIENT-SIDE REAL-TIME AI VISION DETECTOR (COCO-SSD 30 FPS)
+// ============================================================================
+class ClientObjectDetector {
+  constructor() {
+    this.model = null;
+    this.isLoading = false;
+    this.isReady = false;
+    this.isDetecting = false;
+  }
+
+  async init() {
+    if (this.isReady || this.isLoading) return;
+    this.isLoading = true;
+    console.log("[ClientDetector] Initializing browser-side AI vision engine...");
+
+    const tryLoad = async () => {
+      if (typeof cocoSsd !== 'undefined') {
+        try {
+          this.model = await cocoSsd.load({ base: 'mobilenet_v2' });
+          this.isReady = true;
+          this.isLoading = false;
+          console.log("[ClientDetector] Real-time COCO-SSD model ready in browser!");
+          const badge = document.getElementById('engineBadge');
+          if (badge) badge.textContent = "⚡ REAL-TIME AI (30 FPS)";
+          this.startDetectionLoop();
+          return true;
+        } catch (e) {
+          console.warn("[ClientDetector] Model load failed:", e);
+          this.isLoading = false;
+          return false;
+        }
+      }
+      return false;
+    };
+
+    if (!(await tryLoad())) {
+      let attempts = 0;
+      const interval = setInterval(async () => {
+        attempts++;
+        if (typeof cocoSsd !== 'undefined') {
+          clearInterval(interval);
+          await tryLoad();
+        } else if (attempts > 30) {
+          clearInterval(interval);
+          this.isLoading = false;
+          console.warn("[ClientDetector] COCO-SSD script timeout; proceeding with Cloud Edge mode.");
+        }
+      }, 300);
+    }
+  }
+
+  startDetectionLoop() {
+    const loop = async () => {
+      if (this.isReady && this.model && video.readyState >= 2 && video.videoWidth > 0 && !this.isDetecting && !appState.isProcessingOCR) {
+        this.isDetecting = true;
+        try {
+          const predictions = await this.model.detect(video, 5, 0.35);
+          const detections = this.formatPredictions(predictions);
+
+          if (detections && detections.length > 0) {
+            drawBoundingBoxes(detections);
+            this.evaluateDetections(detections);
+          } else {
+            ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+          }
+        } catch (e) {
+          // ignore transient video draw errors
+        } finally {
+          this.isDetecting = false;
+        }
+      }
+      requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+  }
+
+  formatPredictions(predictions) {
+    if (!predictions || !predictions.length) return [];
+    const frameW = video.videoWidth || overlayCanvas.width;
+    const frameH = video.videoHeight || overlayCanvas.height;
+    const totalArea = frameW * frameH;
+
+    return predictions.map(p => {
+      const [x, y, w, h] = p.bbox;
+      const midX = x + (w / 2);
+      let corridor = 'center';
+      if (midX < frameW * 0.33) corridor = 'left';
+      else if (midX > frameW * 0.66) corridor = 'right';
+
+      const areaRatio = (w * h) / totalArea;
+      const heightRatio = h / frameH;
+      let proximity = 'ahead';
+      let is_critical = false;
+
+      // Close proximity estimation
+      if (areaRatio > 0.16 || heightRatio > 0.40) {
+        proximity = 'very close';
+        is_critical = true;
+      } else if (areaRatio > 0.06 || heightRatio > 0.20) {
+        proximity = 'close';
+        is_critical = (corridor === 'center');
+      }
+
+      return {
+        bbox: [x, y, w, h],
+        is_xywh: true,
+        label: p.class,
+        conf: p.score,
+        corridor: corridor,
+        proximity: proximity,
+        is_critical: is_critical
+      };
+    });
+  }
+
+  evaluateDetections(detections) {
+    const critical = detections.find(d => d.is_critical);
+    const centerDets = detections.filter(d => d.corridor === 'center');
+
+    if (critical) {
+      const label = critical.label.toUpperCase();
+      const alertMsg = `Warning: ${label} directly ahead in center path!`;
+      updateStatus('DANGER', "DANGER AHEAD", alertMsg);
+      audioCtrl.speak(alertMsg, true, critical.label);
+    } else if (centerDets.length > 0) {
+      const top = centerDets[0];
+      const alertMsg = `${top.label.toUpperCase()} in center path (${top.proximity}).`;
+      updateStatus('DANGER', "CAUTION", alertMsg);
+      audioCtrl.speak(alertMsg, false, top.label);
+    } else {
+      const top = detections[0];
+      const alertMsg = `${top.label.toUpperCase()} detected on ${top.corridor}.`;
+      updateStatus('SAFE', "SAFE PATH", alertMsg);
+    }
+  }
+}
+
+const clientDetector = new ClientObjectDetector();
+window.clientDetector = clientDetector;
+
+// ============================================================================
 // 2. APPLICATION STATE & DOM REFERENCES
 // ============================================================================
 const appState = {
@@ -523,12 +664,61 @@ function extractHazardKeyword(alertText) {
 
 function drawBoundingBoxes(detections) {
   ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+  if (!detections || !detections.length) return;
+
+  const vW = video.videoWidth || overlayCanvas.width;
+  const vH = video.videoHeight || overlayCanvas.height;
+  const scaleX = overlayCanvas.width / vW;
+  const scaleY = overlayCanvas.height / vH;
+
   detections.forEach(det => {
-    const [x1, y1, x2, y2] = det.bbox;
+    let x, y, w, h;
+    if (det.bbox && det.bbox.length === 4) {
+      if (det.is_xywh) {
+        [x, y, w, h] = det.bbox;
+      } else {
+        [x, y, w, h] = [det.bbox[0], det.bbox[1], det.bbox[2] - det.bbox[0], det.bbox[3] - det.bbox[1]];
+      }
+    } else {
+      return;
+    }
+
+    x *= scaleX;
+    y *= scaleY;
+    w *= scaleX;
+    h *= scaleY;
+
     const isCrit = det.is_critical || det.proximity === 'very close';
-    ctx.lineWidth = isCrit ? 6 : 3;
-    ctx.strokeStyle = isCrit ? '#FF0033' : '#00E676';
-    ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+    const isClose = det.proximity === 'close';
+    const strokeColor = isCrit ? '#FF0033' : (isClose ? '#FFD700' : '#00E676');
+
+    // 1. High contrast bounding box
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.85)';
+    ctx.shadowBlur = 6;
+    ctx.lineWidth = isCrit ? 6 : 4;
+    ctx.strokeStyle = strokeColor;
+    ctx.strokeRect(x, y, w, h);
+
+    // 2. High-contrast label badge
+    const labelStr = (det.label || det.class || 'OBJECT').toUpperCase();
+    const confStr = det.conf ? ` ${Math.round(det.conf * 100)}%` : '';
+    const corridorStr = det.corridor ? ` [${det.corridor.toUpperCase()}]` : '';
+    const fullText = `${labelStr}${confStr}${corridorStr}`;
+
+    ctx.font = 'bold 15px "Segoe UI", Roboto, Arial, sans-serif';
+    const textMetrics = ctx.measureText(fullText);
+    const badgeW = textMetrics.width + 16;
+    const badgeH = 26;
+    const badgeY = Math.max(0, y - badgeH);
+
+    // Badge background
+    ctx.fillStyle = strokeColor;
+    ctx.fillRect(x, badgeY, badgeW, badgeH);
+
+    // Badge text
+    ctx.fillStyle = isCrit ? '#FFFFFF' : '#000000';
+    ctx.shadowBlur = 0;
+    ctx.fillText(fullText, x + 8, badgeY + 18);
   });
 }
 
@@ -672,4 +862,5 @@ window.addEventListener('DOMContentLoaded', () => {
   initCamera();
   initBackendConnection();
   initSpeechRecognition();
+  clientDetector.init();
 });
