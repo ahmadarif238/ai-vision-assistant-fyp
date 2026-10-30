@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#000000">
+  <meta name="description" content="AI Vision Assistant for Elderly and Visually Impaired Users">
+  <title>AI Vision Assistant - Ultra Accessible</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body class="accessible-body">
+
+  <!-- ============================================================ -->
+  <!-- ZONE 1: TOP ZONE (Camera Viewport + Giant Status Banner)      -->
+  <!-- ============================================================ -->
+  <section class="touch-zone zone-top" id="zoneTop" aria-label="Camera View and Walking Path Status">
+    <!-- Top Utility Controls Bar -->
+    <div class="top-bar">
+      <button id="langToggleBtn" class="pill-btn lang-btn" aria-label="Toggle Language: English or Urdu">
+        🌐 <span id="langLabel">ENGLISH</span>
+      </button>
+
+      <div class="mode-pill" id="modePill" aria-live="polite">
+        <span class="pulse-dot"></span>
+        <span id="engineBadge">INITIALIZING...</span>
+      </div>
+
+      <button id="flipCamBtn" class="pill-btn" aria-label="Flip Camera front or back">
+        📷 FLIP
+      </button>
+    </div>
+
+    <!-- Live Viewport with Corridor Overlay -->
+    <div class="camera-frame">
+      <video id="cameraFeed" autoplay playsinline muted></video>
+      <canvas id="overlayCanvas"></canvas>
+      
+      <!-- High Contrast Corridor Guide Markers -->
+      <div class="corridor-guides" aria-hidden="true">
+        <div class="c-col c-left"><span>LEFT</span></div>
+        <div class="c-col c-center"><span>CENTER PATH</span></div>
+        <div class="c-col c-right"><span>RIGHT</span></div>
+      </div>
+    </div>
+
+    <!-- Giant Path Status Banner (Green for Safe / Red-Yellow for Danger) -->
+    <div id="statusBanner" class="giant-status-banner safe" role="status" aria-live="assertive">
+      <span class="status-symbol" id="statusSymbol">✓</span>
+      <span class="status-headline" id="statusHeadline">SAFE PATH</span>
+      <span class="status-subline" id="statusSubline">Forward corridor is clear to walk</span>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- ZONE 2: MIDDLE ZONE (Giant Button - 35% Screen Height)        -->
+  <!-- ============================================================ -->
+  <section class="touch-zone zone-middle" id="zoneMiddle" role="button" tabindex="0" aria-label="Tap to ask a question or explore the scene">
+    <div class="giant-touch-card" id="middleCard">
+      <div class="pulse-ring" id="pulseRing"></div>
+      <div class="middle-icon" id="middleIcon">🎙️</div>
+      <h2 class="middle-title" id="middleTitle">TAP TO SPEAK OR ASK</h2>
+      <p class="middle-subtext" id="middleSubtext">Touch anywhere here. I will listen and describe what is in front of you.</p>
+      <div class="speech-bubble" id="speechBubble" aria-live="polite">
+        <span class="bubble-speaker">🔊 ASSISTANT:</span>
+        <span class="bubble-text" id="bubbleText">Tap anywhere to unlock voice guidance.</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- ZONE 3: BOTTOM ZONE (Split into 2 Giant Buttons - 25% Height) -->
+  <!-- ============================================================ -->
+  <section class="touch-zone zone-bottom" aria-label="Secondary Actions">
+    <!-- Left Giant Button: Document / Sign Reader -->
+    <button class="bottom-half-btn btn-ocr" id="btnOcr" aria-label="Read Document or Sign in front of camera">
+      <span class="half-icon">📄</span>
+      <span class="half-title" id="ocrTitle">READ TEXT</span>
+      <span class="half-sub" id="ocrSub">Street signs, bills, medicines</span>
+    </button>
+
+    <!-- Right Giant Button: Repeat Last Alert / Test Sound -->
+    <button class="bottom-half-btn btn-repeat" id="btnRepeat" aria-label="Repeat last warning or test sound">
+      <span class="half-icon">🔁</span>
+      <span class="half-title" id="repeatTitle">REPEAT SOUND</span>
+      <span class="half-sub" id="repeatSub">Hear last message or check audio</span>
+    </button>
+  </section>
+
+  <!-- Hidden Working Elements -->
+  <canvas id="hiddenCanvas" style="display: none;"></canvas>
+  <audio id="fallbackAudioPlayer" style="display: none;"></audio>
+
+  <!-- Audio Unlock Prompt (Fades out immediately after 1st tap) -->
+  <div id="unlockOverlay" class="unlock-overlay" aria-hidden="true">
+    <div class="unlock-box">
+      <div class="unlock-icon">👆</div>
+      <h2>TAP ANYWHERE TO START</h2>
+      <p>آواز شروع کرنے کے لیے اسکرین پر کہیں بھی ہاتھ لگائیں</p>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

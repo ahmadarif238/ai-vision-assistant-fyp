@@ -1,0 +1,39 @@
+# Environment Variables & Secrets
+.env
+.env.local
+*.env
+
+# Python & Virtual Environments
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+vision-env/
+.pytest_cache/
+
+# Large Model Binary Weights (Documented in models/README.md)
+models/*.onnx
+models/*.pt
+models/*.bin
+models/*.xml
+models/*.partial
+*.onnx
+*.pt
+*.bin
+*.xml
+*.partial
+*.pptx
+*.mp3
+*.wav
+
+# System & IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Vercel Cache
+.vercel
