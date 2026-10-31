@@ -1,3 +1,11 @@
+"""
+Hazard Analyzer for AI Vision Assistant (2026 SOTA)
+Implements Strict 'Silent-Until-Danger' Spatial Filtering:
+- Center collision corridor prioritization
+- Side encroachment threshold (Area_Ratio >= 0.12)
+- Zero spoken chattering during clear paths
+"""
+
 from typing import List, Dict, Any, Optional
 from backend.core.config import settings
 
@@ -5,18 +13,25 @@ class HazardAnalyzer:
     """
     Evaluates detected objects, computes spatial positioning across 3 corridors
     (Left, Center, Right), calculates proximity area ratios, and prioritizes
-    critical voice alerts for immediate safety.
+    critical voice alerts strictly when collision threat exists.
     """
     
-    HIGH_RISK_KEYWORDS = {
+    CRITICAL_HAZARDS = {
         "pothole", "manhole", "open manhole", "ditch", "unpaved ditch",
-        "wire", "hanging wire", "electrical", "switchboard", "step", "stairs",
-        "motorcycle", "car", "truck", "bus", "barrier", "pole", "curb"
+        "wire", "hanging wire", "electrical switchboard", "switchboard",
+        "step", "steps", "stairs", "motorcycle", "car", "truck", "bus",
+        "barrier", "pole", "curb", "ground drop-off", "hole"
+    }
+
+    # Benign objects that should never trigger navigation alerts
+    BENIGN_OBJECTS = {
+        "laptop", "cell phone", "phone", "cup", "bottle", "book", "mouse",
+        "keyboard", "remote", "clock", "vase", "bowl", "tv", "bed"
     }
     
     def __init__(self):
         self.last_alert_time = 0.0
-        self.cooldown_sec = 2.0  # Avoid repetitive spamming of identical alerts
+        self.cooldown_sec = 6.0  # Strict 6s cooldown per hazard
         self.last_alert_key = ""
 
     def analyze(self, detections: List[Dict[str, Any]], frame_w: int, frame_h: int) -> Dict[str, Any]:
@@ -45,6 +60,13 @@ class HazardAnalyzer:
             box_area = box_w * box_h
             area_ratio = box_area / frame_area
             
+            label = det["label"].strip().lower()
+            conf = det["conf"]
+
+            # Filter out benign desktop / indoor accessories
+            if label in self.BENIGN_OBJECTS and area_ratio < 0.25:
+                continue
+
             # Spatial corridor
             cx = (x1 + x2) / 2.0
             if cx < frame_w * settings.CORRIDOR_LEFT:
@@ -57,48 +79,52 @@ class HazardAnalyzer:
             # Proximity estimation
             if area_ratio >= settings.PROXIMITY_CRITICAL_RATIO:
                 proximity = "very close"
-                is_critical = True
             elif area_ratio >= settings.PROXIMITY_WARNING_RATIO:
-                proximity = "approaching"
-                is_critical = False
+                proximity = "close"
             elif area_ratio >= settings.PROXIMITY_FAR_RATIO:
                 proximity = "nearby"
-                is_critical = False
             else:
                 proximity = "distant"
-                is_critical = False
                 
-            label = det["label"]
-            conf = det["conf"]
-            
-            # Check if high hazard
-            is_hazard = any(k in label.lower() for k in self.HIGH_RISK_KEYWORDS)
-            
+            # Check if critical physical hazard
+            is_hazard = any(k in label for k in self.CRITICAL_HAZARDS)
+            is_person = "person" in label or "human" in label
+
             obj_info = {
-                "label": label,
+                "label": det["label"],
                 "confidence": round(conf, 2),
                 "bbox": [round(x1), round(y1), round(x2), round(y2)],
                 "corridor": corridor,
                 "area_ratio": round(area_ratio, 4),
                 "proximity": proximity,
-                "is_hazard": is_hazard,
-                "is_critical": is_critical
+                "is_hazard": is_hazard or is_person,
+                "is_critical": False
             }
+
+            # Silent-Until-Danger Rule Evaluation:
+            # 1. Threat in Center Corridor:
+            if corridor == "center":
+                if is_hazard or area_ratio >= 0.08:
+                    obj_info["is_critical"] = True
+                    has_critical = True
+                    if is_hazard:
+                        alert = f"Stop: {det['label']} close in center path."
+                    elif is_person:
+                        alert = "Caution: Person directly in your path."
+                    else:
+                        alert = f"Caution: Obstacle ahead in center path."
+                    critical_alerts.append(alert)
+
+            # 2. Side Encroachment Rule (Area_Ratio >= 0.12):
+            elif area_ratio >= 0.12 and is_hazard:
+                obj_info["is_critical"] = True
+                has_critical = True
+                critical_alerts.append(f"Caution: {det['label']} close on your {corridor}.")
+
             enhanced_objects.append(obj_info)
             corridors[corridor].append(obj_info)
-            
-            # Evaluate priority alert
-            if is_critical and corridor == "center":
-                has_critical = True
-                alert_text = f"Stop! {label} very close in center!" if is_hazard else f"Caution: {label} directly ahead!"
-                critical_alerts.append(alert_text)
-            elif is_hazard and is_critical:
-                has_critical = True
-                critical_alerts.append(f"Caution: {label} on the {corridor} very close!")
-            elif is_hazard and proximity == "approaching" and corridor == "center":
-                critical_alerts.append(f"Attention: {label} approaching in center.")
 
-        # Pick top priority alert
+        # Pick top priority alert (if any)
         top_alert = critical_alerts[0] if critical_alerts else None
 
         # Build natural scene description
@@ -118,7 +144,6 @@ class HazardAnalyzer:
             items = corridors[side]
             if not items:
                 continue
-            # Summarize items on this side
             counts: Dict[str, int] = {}
             for it in items:
                 lbl = it["label"]
@@ -142,4 +167,3 @@ class HazardAnalyzer:
         return ". ".join(parts) + "."
 
 hazard_analyzer = HazardAnalyzer()
-

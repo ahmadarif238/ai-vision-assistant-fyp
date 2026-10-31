@@ -1,6 +1,7 @@
 """
 Vercel Serverless Entrypoint for AI Vision Assistant (2026)
 Optimized for Vercel Python runtime: lightweight, stateless, 100% English.
+Silent-Until-Danger Navigation & Interactive Multimodal Companion.
 """
 
 import os
@@ -14,7 +15,7 @@ from pydantic import BaseModel
 from groq import AsyncGroq
 from gtts import gTTS
 
-app = FastAPI(title="AI Vision Assistant (Cloud Edge Vercel API)", version="2026.1.0")
+app = FastAPI(title="AI Vision Assistant (Cloud Edge Vercel API)", version="2026.2.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -88,7 +89,9 @@ async def call_groq_vision(client, messages, response_format=None, max_tokens=25
 async def analyze_scene(req: SceneRequest):
     """
     Multimodal scene hazard analysis for Vercel Cloud Edge mode.
-    Evaluates image and returns safe/danger status, priority alerts, and scene description in English.
+    Strict Silent-Until-Danger Policy:
+    Returns status: SAFE, priority_alert: null, speech_text: null on clear paths.
+    Only triggers DANGER for true physical collision hazards in the center path or encroaching sides.
     """
     client = get_groq_client()
 
@@ -96,21 +99,29 @@ async def analyze_scene(req: SceneRequest):
         return {
             "status": "SAFE",
             "priority_alert": None,
-            "scene_description": "Forward path appears clear. Proceed with care.",
-            "speech_text": "Forward path is clear."
+            "scene_description": "Forward path is clear. Silent monitoring active.",
+            "speech_text": None,
+            "detections": []
         }
 
     system_prompt = (
-        "You are an AI Object Detection and Walking Assistant for the visually impaired. "
-        "Analyze the camera view carefully. Identify all visible objects, people, hazards, and obstacles (e.g. person, chair, cell phone, bottle, cup, laptop, car, door, steps, wall). "
-        "Estimate the walking corridor (left, center, or right) and proximity (very close, close, or ahead) for each object. "
-        "IMPORTANT: Only set status to 'DANGER' if an actual physical hazard, vehicle, or obstacle is blocking the center walking path. "
-        "If the camera view is dark, blurry, empty, or clear, set status to 'SAFE', priority_alert to null, and inform the user that the path is clear. "
-        "Respond strictly in JSON format with exact keys:\n"
+        "You are an AI Walking Mobility Safety Assistant for a visually impaired user. "
+        "Strict 'Silent-Until-Danger' Policy:\n"
+        "1. SAFE PATH RULE: If the walking path is clear, or if visible objects are harmless background items "
+        "(such as laptops, phones, cups, bottles, books, desk accessories, distant walls, or distant furniture), "
+        "or if the camera is dark or blurry, you MUST set status to 'SAFE', priority_alert to null, and speech_text to null. "
+        "NEVER generate spoken alerts for safe paths or benign objects.\n"
+        "2. THREAT RULE: Set status to 'DANGER' ONLY when an actual physical obstacle or danger is directly in the user's "
+        "collision trajectory (specifically the CENTER walking path, or a large hazard encroaching closely from left/right). "
+        "Physical hazards include: pothole, open manhole/drain, steps/stairs, vehicle/motorcycle, a person directly blocking "
+        "the center path, pole, barrier, hanging wire, or sudden ground drop-off.\n"
+        "3. When DANGER is detected, provide a crisp, 4-to-6 word directional warning in priority_alert and speech_text "
+        "(e.g., 'Caution: Step directly ahead', 'Stop: Obstacle in center path', 'Warning: Person blocking path').\n"
+        "Respond strictly in JSON format with exact schema:\n"
         "{\n"
         '  "status": "SAFE" or "DANGER",\n'
-        '  "priority_alert": "Short urgent warning if hazard or person exists directly ahead, else null",\n'
-        '  "detected_objects": ["person", "chair", "cell phone"],\n'
+        '  "priority_alert": "Crisp 4-6 word warning ONLY if physical danger in center path, else null",\n'
+        '  "detected_objects": ["person", "chair"],\n'
         '  "detections": [\n'
         '    {\n'
         '      "label": "person",\n'
@@ -121,8 +132,8 @@ async def analyze_scene(req: SceneRequest):
         '      "bbox": [100, 150, 800, 750]\n'
         '    }\n'
         '  ],\n'
-        '  "scene_description": "2 sentences describing surroundings and forward path",\n'
-        '  "speech_text": "Natural spoken sentence listing detected objects and navigation advice"\n'
+        '  "scene_description": "Brief 1-sentence description of surroundings",\n'
+        '  "speech_text": "Same 4-6 word warning if DANGER, strictly null if SAFE"\n'
         "}\n"
     )
 
@@ -134,7 +145,7 @@ async def analyze_scene(req: SceneRequest):
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": req.query or "Check this path for walking hazards, people, or obstacles."},
+                    {"type": "text", "text": req.query or "Check this path for physical walking hazards or obstacles."},
                     {"type": "image_url", "image_url": {"url": img_url}}
                 ]
             }
@@ -147,14 +158,21 @@ async def analyze_scene(req: SceneRequest):
         )
         res_json = json.loads(response.choices[0].message.content)
         res_json["used_model"] = used_model
+        
+        # Enforce Silent-Until-Danger guard on response
+        if res_json.get("status") != "DANGER":
+            res_json["status"] = "SAFE"
+            res_json["priority_alert"] = None
+            res_json["speech_text"] = None
+
         return res_json
     except Exception as e:
         print(f"[Vercel analyze-scene Error]: {e}")
         return {
             "status": "SAFE",
             "priority_alert": None,
-            "scene_description": "Camera monitoring active. Forward corridor is being tracked.",
-            "speech_text": "Path monitored.",
+            "scene_description": "Silent monitoring active.",
+            "speech_text": None,
             "error_detail": str(e)
         }
 
@@ -168,12 +186,12 @@ async def ocr_read(req: SceneRequest):
         return {
             "success": True,
             "text": "Notice / Document detected.",
-            "summary": "Document detected. Please connect Groq API key in Settings for full reading."
+            "summary": "Document detected. Please configure Groq API key for full OCR reading."
         }
 
     prompt = (
         "Transcribe all readable text from this image accurately. "
-        "Then provide a 1-sentence plain summary in English suitable for read-aloud audio to a visually impaired person. "
+        "Then provide a crisp 1-to-2 sentence summary in English suitable for reading aloud to a visually impaired person. "
         "Return JSON with keys: 'text', 'summary'."
     )
 
@@ -181,7 +199,7 @@ async def ocr_read(req: SceneRequest):
 
     try:
         messages = [
-            {"role": "system", "content": "You are a fast document reading vision assistant."},
+            {"role": "system", "content": "You are a fast document reading vision assistant for the blind. Output clear English."},
             {
                 "role": "user",
                 "content": [
@@ -198,20 +216,43 @@ async def ocr_read(req: SceneRequest):
         )
         return json.loads(response.choices[0].message.content)
     except Exception as e:
-        return {"success": False, "error": str(e), "summary": "Text reading encountered an issue."}
+        return {"success": False, "error": str(e), "summary": "Text reading encountered an issue. Please hold the document steady and retry."}
 
 @app.post("/api/chat/multimodal")
 async def chat_multimodal(req: ChatRequest):
-    """Conversational question answering with image context in English"""
-    client = get_groq_client()
+    """
+    Conversational question answering with image context in English.
+    Handles:
+    - Spatial room descriptions ("What is around me?", "Describe room")
+    - Object locating ("Where is the chair / switch / door?")
+    - Voice commands ("Mute alerts", "Resume navigation", "Read text")
+    """
+    user_query = req.query.strip().lower()
+    
+    # Handle quick voice commands locally for zero latency
+    if any(q in user_query for q in ["mute alert", "mute sound", "turn off voice", "quiet mode", "stop talking", "mute"]):
+        return {"query": req.query, "reply": "Alerts muted. Silent mode active.", "command": "mute"}
+    if any(q in user_query for q in ["unmute", "resume navigation", "turn on voice", "enable sound", "start alerts"]):
+        return {"query": req.query, "reply": "Navigation alerts resumed.", "command": "unmute"}
+    if any(q in user_query for q in ["read text", "read document", "read sign", "scan text", "read this"]):
+        return {"query": req.query, "reply": "Scanning text in front of you.", "command": "ocr"}
 
+    client = get_groq_client()
     if not client:
         return {
             "query": req.query,
-            "reply": "I see your surroundings. The path ahead is open."
+            "reply": "I see your camera view. The walking path directly ahead is open."
         }
 
-    system = "You are an assistive vision companion for an elderly or blind person. Be concise, direct, helpful, and under 2 sentences in clear English."
+    system = (
+        "You are an assistive vision companion for an elderly or visually impaired person. "
+        "Answer the user's question directly, clearly, and naturally in 1 to 2 sentences of spoken English.\n"
+        "- If asked 'What is around me?' or 'Describe the room': summarize the overall layout and key objects using relative positions "
+        "(e.g., 'You are in a bedroom with a bed on your left, a desk with a computer ahead, and a doorway to your right.').\n"
+        "- If asked 'Where is [item]?' or 'Find [item]': give actionable clock-face or step directions "
+        "(e.g., 'The chair is two steps ahead slightly to your left at eleven o'clock.').\n"
+        "- Keep it concise, helpful, and natural for text-to-speech."
+    )
 
     messages = [{"role": "system", "content": system}]
     if req.image_b64:
@@ -230,11 +271,11 @@ async def chat_multimodal(req: ChatRequest):
         response, used_model = await call_groq_vision(
             client,
             messages=messages,
-            max_tokens=150
+            max_tokens=180
         )
         return {"query": req.query, "reply": response.choices[0].message.content.strip(), "used_model": used_model}
     except Exception as e:
-        return {"query": req.query, "reply": f"Assistant response unavailable: {str(e)}"}
+        return {"query": req.query, "reply": "I could not analyze the image right now. Please try again."}
 
 @app.post("/api/tts")
 async def tts_fallback(req: TTSRequest):

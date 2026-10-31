@@ -1,11 +1,26 @@
 /**
  * AI Vision Assistant 2026 - Ultra-Accessible Audio & UI Controller
  * WCAG AAA Compliant Interface for Elderly and Visually Impaired Users
- * Single-flight SpeechSynthesis, Web Audio API Sonar, Zero Audio Echo, 100% English.
+ * 
+ * Features:
+ * 1. "Silent-Until-Danger" Navigation Intelligence:
+ *    - 100% silent on safe paths and benign objects (Zero Chattering).
+ *    - Strict Threat-Only Triggering: Center collision corridor or side encroaching (Area_Ratio >= 0.12).
+ *    - 6-second cooldown per hazard type.
+ * 2. Two-Way Interactive Voice Companion:
+ *    - Middle zone tap-to-ask with listening chime.
+ *    - Multimodal visual Q&A (spatial room layout & object locating).
+ *    - Voice commands ("Mute alerts", "Resume navigation", "Read text").
+ *    - Accessible dialog fallback for text input when STT is unsupported.
+ * 3. Zero Audio Echo / Double-Voice Fix:
+ *    - Exclusive SpeechSynthesis engine (zero MP3 fallback overlap).
+ *    - Single click event binding & silent AudioContext unlock.
+ *    - 5,000ms duplicate suppression window.
+ * 4. 100% Global English.
  */
 
 // ============================================================================
-// 1. ROBUST AUDIO CONTROLLER (Single-Flight, No Overlap, No Echo)
+// 1. ROBUST AUDIO CONTROLLER (Exclusive SpeechSynthesis, Zero Echo, Mutex)
 // ============================================================================
 class AudioController {
   constructor() {
@@ -22,7 +37,7 @@ class AudioController {
     this.lastContentText = '';
     this.lastSpokenTimestamp = 0;
     this.lastHazardSpoken = {};
-    this.hazardCooldownMs = 3500; // 3.5s cooldown per unique hazard type
+    this.hazardCooldownMs = 6000; // Strict 6.0s cooldown per unique hazard type
     
     this.fallbackPlayer = document.getElementById('fallbackAudioPlayer');
     this.voices = [];
@@ -54,12 +69,12 @@ class AudioController {
         this.audioCtx.resume();
       }
 
-      // Unlock Web Audio API with a soft low-volume chime
+      // Unlock Web Audio API with a soft low-volume sine tone
       this.playTone(587.33, 40, 'sine', 0.05);
 
-      // Prime SpeechSynthesis with a zero-volume empty utterance
+      // Prime SpeechSynthesis with a silent empty utterance
       if (this.speechSynth) {
-        const silent = new SpeechSynthesisUtterance(' ');
+        const silent = new SpeechSynthesisUtterance('');
         silent.volume = 0;
         this.speechSynth.speak(silent);
       }
@@ -114,6 +129,13 @@ class AudioController {
     if (navigator.vibrate) navigator.vibrate(40);
   }
 
+  // Listening chime for middle zone
+  playListeningChime() {
+    this.playTone(659.25, 90, 'sine', 0.3);
+    setTimeout(() => this.playTone(880, 110, 'sine', 0.3), 100);
+    if (navigator.vibrate) navigator.vibrate(60);
+  }
+
   // Critical danger sonar (high-pitch dual chirp)
   playDangerChirp() {
     this.playTone(880, 130, 'square', 0.4);
@@ -137,7 +159,7 @@ class AudioController {
     const cleanText = text.trim();
     const now = Date.now();
 
-    // 1. Strict Hazard Cooldown (3.5s per hazard key)
+    // 1. Strict Hazard Cooldown (6.0s per unique hazard key)
     if (hazardKey) {
       const lastTime = this.lastHazardSpoken[hazardKey] || 0;
       if (now - lastTime < this.hazardCooldownMs) {
@@ -146,12 +168,12 @@ class AudioController {
       this.lastHazardSpoken[hazardKey] = now;
     }
 
-    // 2. Exact Duplicate Suppression (4000ms window for identical message)
-    if (cleanText === this.lastSpokenText && (now - this.lastSpokenTimestamp) < 4000) {
+    // 2. Exact Duplicate Suppression (5000ms window for identical message)
+    if (cleanText === this.lastSpokenText && (now - this.lastSpokenTimestamp) < 5000) {
       return;
     }
 
-    // 3. Short Single-Flight Mutex (500ms lock between any speech calls to prevent overlapping calls)
+    // 3. Short Single-Flight Mutex (500ms lock between any speech calls)
     if ((now - this.lastSpokenTimestamp) < 500) {
       return;
     }
@@ -167,7 +189,7 @@ class AudioController {
     const bubbleText = document.getElementById('bubbleText');
     if (bubbleText) bubbleText.textContent = cleanText;
 
-    // Hardware Audio Sonar Chirp
+    // Hardware Audio Sonar Chirp for priority danger
     if (isPriority) {
       this.playDangerChirp();
     }
@@ -219,7 +241,7 @@ class AudioController {
       fetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: text, lang: 'en' })
+        body: JSON.stringify({ text: text })
       })
       .then(res => {
         if (!res.ok) throw new Error("Server TTS unavailable");
@@ -242,7 +264,7 @@ const audioCtrl = new AudioController();
 window.audioCtrl = audioCtrl;
 
 // ============================================================================
-// 1B. CLIENT-SIDE REAL-TIME AI VISION DETECTOR (COCO-SSD 30 FPS)
+// 2. CLIENT-SIDE REAL-TIME AI VISION DETECTOR (COCO-SSD 30 FPS)
 // ============================================================================
 class ClientObjectDetector {
   constructor() {
@@ -250,6 +272,33 @@ class ClientObjectDetector {
     this.isLoading = false;
     this.isReady = false;
     this.isDetecting = false;
+    this.hasActiveCritical = false;
+    this.paused = false;
+
+    // Benign everyday accessories to filter out during passive walking
+    this.benignObjects = new Set([
+      'laptop', 'cell phone', 'phone', 'cup', 'bottle', 'book', 'mouse',
+      'keyboard', 'remote', 'clock', 'vase', 'bowl', 'tv', 'bed', 'sink', 'toilet'
+    ]);
+
+    // High collision risk obstacle categories
+    this.hazardKeywords = [
+      'person', 'chair', 'car', 'motorcycle', 'bicycle', 'bus', 'truck',
+      'pothole', 'manhole', 'stairs', 'step', 'barrier', 'pole', 'curb'
+    ];
+  }
+
+  feedDetections(detections) {
+    if (detections && detections.length > 0) {
+      drawBoundingBoxes(detections);
+      this.evaluateDetections(detections);
+    } else {
+      this.hasActiveCritical = false;
+      ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+      if (appState.lastHazardStatus !== 'SAFE') {
+        updateStatus('SAFE', "SAFE PATH", "SILENT MONITORING");
+      }
+    }
   }
 
   async init() {
@@ -295,6 +344,10 @@ class ClientObjectDetector {
 
   startDetectionLoop() {
     const loop = async () => {
+      if (this.paused) {
+        requestAnimationFrame(loop);
+        return;
+      }
       if (this.isReady && this.model && video.readyState >= 2 && video.videoWidth > 0 && !this.isDetecting && !appState.isProcessingOCR) {
         this.isDetecting = true;
         try {
@@ -306,9 +359,12 @@ class ClientObjectDetector {
             this.evaluateDetections(detections);
           } else {
             this.hasActiveCritical = false;
-            ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
-            if (appState.lastHazardStatus !== 'SAFE') {
-              updateStatus('SAFE', "SAFE PATH", "Forward corridor is clear to walk");
+            if (!appState.lastCloudDangerTime || (Date.now() - appState.lastCloudDangerTime > 2500)) {
+              ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+              // Silent-Until-Danger: Safe path reset without any spoken chattering
+              if (appState.lastHazardStatus !== 'SAFE') {
+                updateStatus('SAFE', "SAFE PATH", "SILENT MONITORING");
+              }
             }
           }
         } catch (e) {
@@ -326,62 +382,97 @@ class ClientObjectDetector {
     if (!predictions || !predictions.length) return [];
     const frameW = video.videoWidth || overlayCanvas.width;
     const frameH = video.videoHeight || overlayCanvas.height;
-    const totalArea = frameW * frameH;
+    const totalArea = Math.max(1, frameW * frameH);
 
-    return predictions.map(p => {
+    const formatted = [];
+    for (const p of predictions) {
       const [x, y, w, h] = p.bbox;
       const midX = x + (w / 2);
       let corridor = 'center';
       if (midX < frameW * 0.33) corridor = 'left';
-      else if (midX > frameW * 0.66) corridor = 'right';
+      else if (midX > frameW * 0.67) corridor = 'right';
 
       const areaRatio = (w * h) / totalArea;
-      const heightRatio = h / frameH;
-      let proximity = 'ahead';
-      let is_critical = false;
+      const label = (p.class || '').toLowerCase().trim();
 
-      // Close proximity estimation
-      if (areaRatio > 0.16 || heightRatio > 0.40) {
-        proximity = 'very close';
-        is_critical = true;
-      } else if (areaRatio > 0.06 || heightRatio > 0.20) {
-        proximity = 'close';
-        is_critical = (corridor === 'center');
+      // Filter out benign small tabletop items
+      if (this.benignObjects.has(label) && areaRatio < 0.20) {
+        continue;
       }
 
-      return {
+      let proximity = 'distant';
+      let is_critical = false;
+
+      // Proximity categorization
+      if (areaRatio > 0.14) {
+        proximity = 'very close';
+      } else if (areaRatio > 0.06) {
+        proximity = 'close';
+      } else {
+        proximity = 'ahead';
+      }
+
+      const isHazard = this.hazardKeywords.some(k => label.includes(k));
+
+      // "Silent-Until-Danger" Corridor Filtering Rules:
+      // 1. Center Walking Corridor Threat:
+      if (corridor === 'center') {
+        if (isHazard && areaRatio >= 0.05) {
+          is_critical = true;
+        } else if (areaRatio >= 0.10) {
+          is_critical = true;
+        }
+      }
+      // 2. Side Encroachment Threat:
+      else if (areaRatio >= 0.12 && isHazard) {
+        is_critical = true;
+      }
+
+      formatted.push({
         bbox: [x, y, w, h],
         is_xywh: true,
         label: p.class,
         conf: p.score,
         corridor: corridor,
         proximity: proximity,
-        is_critical: is_critical
-      };
-    });
+        areaRatio: areaRatio,
+        is_critical: is_critical,
+        is_hazard: isHazard
+      });
+    }
+
+    return formatted;
   }
 
   evaluateDetections(detections) {
+    // If user is currently in two-way interactive Q&A, don't interrupt with passive alerts
+    if (appState.isInteracting) {
+      return;
+    }
+
     const critical = detections.find(d => d.is_critical);
-    const centerDets = detections.filter(d => d.corridor === 'center');
 
     if (critical) {
       this.hasActiveCritical = true;
-      const label = critical.label.toUpperCase();
-      const alertMsg = `Warning: ${label} directly ahead in center path!`;
+      const labelUpper = critical.label.toUpperCase();
+      let alertMsg;
+
+      if (critical.corridor === 'center') {
+        alertMsg = `Caution: ${labelUpper} directly ahead in center path.`;
+      } else {
+        alertMsg = `Caution: ${labelUpper} close on your ${critical.corridor}.`;
+      }
+
       updateStatus('DANGER', "DANGER AHEAD", alertMsg);
-      audioCtrl.speak(alertMsg, true, critical.label);
-    } else if (centerDets.length > 0) {
-      this.hasActiveCritical = false;
-      const top = centerDets[0];
-      const alertMsg = `${top.label.toUpperCase()} in center path (${top.proximity}).`;
-      updateStatus('DANGER', "CAUTION", alertMsg);
-      audioCtrl.speak(alertMsg, false, top.label);
+      // Announce with strict 6s cooldown per hazard type
+      audioCtrl.speak(alertMsg, true, critical.label.toLowerCase());
     } else {
       this.hasActiveCritical = false;
-      const top = detections[0];
-      const alertMsg = `${top.label.toUpperCase()} detected on ${top.corridor}.`;
-      updateStatus('SAFE', "SAFE PATH", alertMsg);
+      // "Silent-Until-Danger": When path is clear of critical collision hazards,
+      // update banner to SAFE PATH and STAY 100% SILENT.
+      if (appState.lastHazardStatus !== 'SAFE') {
+        updateStatus('SAFE', "SAFE PATH", "SILENT MONITORING");
+      }
     }
   }
 }
@@ -390,7 +481,7 @@ const clientDetector = new ClientObjectDetector();
 window.clientDetector = clientDetector;
 
 // ============================================================================
-// 2. APPLICATION STATE & DOM REFERENCES
+// 3. APPLICATION STATE & DOM REFERENCES
 // ============================================================================
 const isMobileDevice = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 const appState = {
@@ -400,6 +491,7 @@ const appState = {
   cameraStream: null,
   facingMode: isMobileDevice ? 'environment' : 'user', // Environment on mobile, webcam on desktop
   isListening: false,
+  isInteracting: false,
   isProcessingOCR: false,
   recognition: null,
   isAwaitingReply: false,
@@ -407,6 +499,9 @@ const appState = {
   lastHazardStatus: 'SAFE',
   cloudIntervalId: null
 };
+window.appState = appState;
+window.handleDetectionResults = handleDetectionResults;
+window.handleCloudResults = handleCloudResults;
 
 const video = document.getElementById('cameraFeed');
 const overlayCanvas = document.getElementById('overlayCanvas');
@@ -438,8 +533,15 @@ const btnRepeat = document.getElementById('btnRepeat');
 const repeatTitle = document.getElementById('repeatTitle');
 const repeatSub = document.getElementById('repeatSub');
 
+// Accessible Question Dialog Elements
+const questionDialog = document.getElementById('questionDialog');
+const dialogInput = document.getElementById('dialogInput');
+const dialogSubmitBtn = document.getElementById('dialogSubmitBtn');
+const dialogCancelBtn = document.getElementById('dialogCancelBtn');
+const dialogCloseBtn = document.getElementById('dialogCloseBtn');
+
 // ============================================================================
-// 3. WEBRTC CAMERA INITIALIZATION (Resilient Desktop & Mobile Detection)
+// 4. WEBRTC CAMERA INITIALIZATION (Resilient Desktop & Mobile Detection)
 // ============================================================================
 async function initCamera() {
   if (appState.cameraStream) {
@@ -466,7 +568,7 @@ async function initCamera() {
       stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: true });
     } catch (err2) {
       console.error("[Camera] All camera access attempts failed:", err2);
-      updateStatus('DANGER', "Camera Required", "Please allow camera permissions in your browser.");
+      updateStatus('DANGER', "CAMERA REQUIRED", "Please allow camera permissions in browser.");
       return;
     }
   }
@@ -503,23 +605,23 @@ flipCamBtn.addEventListener('click', async (e) => {
   audioCtrl.speak("Camera switched", true);
 });
 
-// Voice Toggle (Mute / Unmute)
+// Voice / Alerts Toggle (Mute / Unmute)
 voiceToggleBtn.addEventListener('click', (e) => {
   e.stopPropagation();
   audioCtrl.unlock();
   audioCtrl.voiceEnabled = !audioCtrl.voiceEnabled;
   voiceToggleBtn.classList.toggle('muted', !audioCtrl.voiceEnabled);
-  voiceLabel.textContent = audioCtrl.voiceEnabled ? "VOICE ON" : "VOICE OFF";
+  voiceLabel.textContent = audioCtrl.voiceEnabled ? "ALERTS: ON" : "ALERTS: MUTED";
   audioCtrl.playTouchChime();
   if (audioCtrl.voiceEnabled) {
-    audioCtrl.speak("Voice guidance enabled", true);
+    audioCtrl.speak("Navigation alerts active.", true);
   } else {
     if (audioCtrl.speechSynth) audioCtrl.speechSynth.cancel();
   }
 });
 
 // ============================================================================
-// 4. HYBRID BACKEND CONNECTION (Local WebSocket vs Cloud Vercel REST)
+// 5. HYBRID BACKEND CONNECTION (Local WebSocket vs Cloud Vercel REST)
 // ============================================================================
 function initBackendConnection() {
   if (appState.isCloudMode) {
@@ -541,7 +643,6 @@ function setupLocalWebSocketMode() {
     appState.ws.onopen = () => {
       appState.wsConnected = true;
       console.log("[WebSocket] Connected to local OpenVINO backend.");
-      // Ensure cloud interval is stopped
       if (appState.cloudIntervalId) {
         clearInterval(appState.cloudIntervalId);
         appState.cloudIntervalId = null;
@@ -595,15 +696,14 @@ function setupCloudEdgeMode() {
   engineBadge.textContent = "☁️ CLOUD EDGE (VERCEL + GROQ)";
   console.log("[CloudMode] Running on Vercel Serverless Architecture.");
 
-  // Prevent multiple overlapping intervals
   if (appState.cloudIntervalId) {
     clearInterval(appState.cloudIntervalId);
     appState.cloudIntervalId = null;
   }
 
-  // Periodic REST frame analysis every 1.8s
+  // Periodic REST frame analysis every 2.0s
   appState.cloudIntervalId = setInterval(async () => {
-    if (video.readyState < 2 || !video.videoWidth || appState.isProcessingOCR || appState.isListening || appState.isAwaitingCloudReply) return;
+    if (video.readyState < 2 || !video.videoWidth || appState.isProcessingOCR || appState.isListening || appState.isInteracting || appState.isAwaitingCloudReply) return;
 
     if (!hiddenCanvas.width || hiddenCanvas.width !== video.videoWidth) {
       hiddenCanvas.width = video.videoWidth;
@@ -629,24 +729,27 @@ function setupCloudEdgeMode() {
     } finally {
       appState.isAwaitingCloudReply = false;
     }
-  }, 1800);
+  }, 2000);
 }
 
 // ============================================================================
-// 5. DETECTION & HAZARD HANDLING
+// 6. DETECTION & HAZARD HANDLING ("Silent-Until-Danger")
 // ============================================================================
 function handleDetectionResults(data) {
+  if (appState.isInteracting) return;
+
   const isDanger = data.has_critical_hazard || Boolean(data.priority_alert);
 
   if (isDanger) {
-    const alertMsg = data.priority_alert || "Obstacle detected ahead!";
+    const alertMsg = data.priority_alert || "Caution: Obstacle detected ahead!";
     updateStatus('DANGER', "DANGER AHEAD", alertMsg);
     
-    // Announce with strict 3.5s cooldown
+    // Announce with strict 6s cooldown
     const hazardWord = extractHazardKeyword(alertMsg);
     audioCtrl.speak(alertMsg, true, hazardWord);
   } else {
-    updateStatus('SAFE', "SAFE PATH", "Forward corridor is clear to walk");
+    // Silent on safe paths
+    updateStatus('SAFE', "SAFE PATH", "SILENT MONITORING");
   }
 
   // Draw overlay bounding boxes
@@ -654,21 +757,24 @@ function handleDetectionResults(data) {
 }
 
 function handleCloudResults(data) {
-  const isDanger = data.status === 'DANGER' || Boolean(data.priority_alert);
-  const alertMsg = data.priority_alert || data.speech_text || (isDanger ? "Obstacle ahead!" : "Forward corridor is clear");
+  if (appState.isInteracting) return;
+
+  const isDanger = data.status === 'DANGER' && Boolean(data.priority_alert);
 
   if (isDanger) {
+    appState.lastCloudDangerTime = Date.now();
+    const alertMsg = data.priority_alert;
     updateStatus('DANGER', "DANGER AHEAD", alertMsg);
     const hazardWord = extractHazardKeyword(alertMsg);
     audioCtrl.speak(alertMsg, true, hazardWord);
   } else {
-    // When cloud confirms path is clear and local detector has no active critical hazard, recover to SAFE!
+    // Silent-Until-Danger: Safe paths remain 100% silent.
     if (!clientDetector.hasActiveCritical) {
-      updateStatus('SAFE', "SAFE PATH", alertMsg);
+      updateStatus('SAFE', "SAFE PATH", "SILENT MONITORING");
     }
   }
 
-  // Draw detections if provided by cloud model and clientDetector is not already drawing at 30 FPS
+  // Draw detections if provided by cloud model and clientDetector is not already running
   if (data.detections && data.detections.length > 0 && !clientDetector.isReady) {
     const formatted = data.detections.map(d => {
       let [y1, x1, y2, x2] = d.bbox || [0, 0, 0, 0];
@@ -703,7 +809,7 @@ function updateStatus(type, headline, subline) {
 
 function extractHazardKeyword(alertText) {
   const lower = alertText.toLowerCase();
-  for (const k of ['person', 'face', 'human', 'pothole', 'manhole', 'ditch', 'wire', 'step', 'stairs', 'motorcycle', 'car', 'vehicle', 'chair', 'barrier', 'wall']) {
+  for (const k of ['person', 'face', 'human', 'pothole', 'manhole', 'ditch', 'wire', 'step', 'stairs', 'motorcycle', 'car', 'vehicle', 'chair', 'barrier', 'pole']) {
     if (lower.includes(k)) return k;
   }
   return 'obstacle';
@@ -770,31 +876,99 @@ function drawBoundingBoxes(detections) {
 }
 
 // ============================================================================
-// 6. TOUCH ZONES INTERACTIONS (Single Event Binding, Zero Overlap)
+// 7. TOUCH ZONES INTERACTIONS (Single Event Binding, Zero Overlap)
 // ============================================================================
 
-// Single global unlock listener
-window.addEventListener('click', () => audioCtrl.unlock(), { once: true });
+// Single global pointerdown listener for silent unlock
+window.addEventListener('pointerdown', () => audioCtrl.unlock(), { once: true });
 
 // ZONE 2: MIDDLE ZONE (Tap to speak / ask question)
 zoneMiddle.addEventListener('click', () => {
   audioCtrl.unlock();
-  audioCtrl.playTouchChime();
+  audioCtrl.playListeningChime();
 
   if (appState.isListening) {
     stopListening();
-    audioCtrl.speak("Listening stopped.", true);
   } else {
-    audioCtrl.speak("Listening. Ask a question or explore the scene.", true);
-    startListening();
+    // If Web Speech API is supported, start speech recognition
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition && !window.location.protocol.includes('http:')) {
+      startListening();
+    } else {
+      // Fallback: Open accessible question dialog
+      openQuestionDialog();
+    }
   }
 });
+
+function openQuestionDialog() {
+  if (!questionDialog) return;
+  appState.isInteracting = true;
+  if (typeof questionDialog.showModal === 'function') {
+    questionDialog.showModal();
+  } else {
+    questionDialog.setAttribute('open', '');
+  }
+  if (dialogInput) {
+    dialogInput.value = '';
+    dialogInput.focus();
+  }
+}
+
+function closeQuestionDialog() {
+  if (!questionDialog) return;
+  if (typeof questionDialog.close === 'function') {
+    questionDialog.close();
+  } else {
+    questionDialog.removeAttribute('open');
+  }
+  setTimeout(() => { appState.isInteracting = false; }, 3000);
+}
+
+if (dialogCloseBtn) {
+  dialogCloseBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeQuestionDialog();
+  });
+}
+
+if (dialogCancelBtn) {
+  dialogCancelBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeQuestionDialog();
+  });
+}
+
+if (dialogSubmitBtn) {
+  dialogSubmitBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const query = dialogInput ? dialogInput.value.trim() : '';
+    if (!query) return;
+    closeQuestionDialog();
+    await handleUserQuestion(query);
+  });
+}
+
+if (dialogInput) {
+  dialogInput.addEventListener('keydown', async (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const query = dialogInput.value.trim();
+      if (!query) return;
+      closeQuestionDialog();
+      await handleUserQuestion(query);
+    }
+  });
+}
 
 // ZONE 3 LEFT: READ DOCUMENT / SIGN (Instant OCR Snapshot)
 btnOcr.addEventListener('click', async () => {
   audioCtrl.unlock();
   audioCtrl.playTouchChime();
+  await triggerDocumentOCR();
+});
 
+async function triggerDocumentOCR() {
   audioCtrl.speak("Scanning text in front of you...", true);
 
   appState.isProcessingOCR = true;
@@ -805,7 +979,7 @@ btnOcr.addEventListener('click', async () => {
     const res = await fetch('/api/ocr/frame', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image_b64: snapshotB64, lang: 'en' })
+      body: JSON.stringify({ image_b64: snapshotB64 })
     });
     const data = await res.json();
     appState.isProcessingOCR = false;
@@ -816,7 +990,7 @@ btnOcr.addEventListener('click', async () => {
     appState.isProcessingOCR = false;
     audioCtrl.speak("Could not read text. Please hold steady and try again.", true);
   }
-});
+}
 
 // ZONE 3 RIGHT: REPEAT LAST ALERT / TEST SOUND
 btnRepeat.addEventListener('click', () => {
@@ -828,13 +1002,66 @@ btnRepeat.addEventListener('click', () => {
     audioCtrl.speak("Repeating: " + msg, true);
   } else {
     audioCtrl.playDangerChirp();
-    audioCtrl.speak("Sound system is active and working properly.", true);
+    audioCtrl.speak("Sound system is active and monitoring safely.", true);
   }
 });
 
 // ============================================================================
-// 7. SPEECH RECOGNITION (Voice Command & Multimodal Groq Vision)
+// 8. INTERACTIVE VOICE COMPANION & GROQ MULTIMODAL Q&A
 // ============================================================================
+async function handleUserQuestion(transcript) {
+  appState.isInteracting = true;
+  const lower = transcript.toLowerCase();
+
+  // Voice Command Handling:
+  if (lower.includes('mute') || lower.includes('stop talking') || lower.includes('quiet')) {
+    audioCtrl.speak("Alerts muted.", true);
+    audioCtrl.voiceEnabled = false;
+    voiceToggleBtn.classList.add('muted');
+    voiceLabel.textContent = "ALERTS: MUTED";
+    setTimeout(() => { appState.isInteracting = false; }, 2000);
+    return;
+  }
+
+  if (lower.includes('unmute') || lower.includes('resume') || lower.includes('start alerts')) {
+    audioCtrl.voiceEnabled = true;
+    voiceToggleBtn.classList.remove('muted');
+    voiceLabel.textContent = "ALERTS: ON";
+    audioCtrl.speak("Navigation alerts resumed.", true);
+    setTimeout(() => { appState.isInteracting = false; }, 2000);
+    return;
+  }
+
+  if (lower.includes('read text') || lower.includes('read document') || lower.includes('read sign')) {
+    await triggerDocumentOCR();
+    setTimeout(() => { appState.isInteracting = false; }, 3000);
+    return;
+  }
+
+  // Visual Scene Query:
+  audioCtrl.speak("Checking scene for you...", true);
+
+  hiddenCtx.drawImage(video, 0, 0, hiddenCanvas.width, hiddenCanvas.height);
+  const frameSnapshot = hiddenCanvas.toDataURL('image/jpeg', 0.85);
+
+  try {
+    const res = await fetch('/api/chat/multimodal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: transcript,
+        image_b64: frameSnapshot
+      })
+    });
+    const data = await res.json();
+    audioCtrl.speak(data.reply, true);
+  } catch (e) {
+    audioCtrl.speak("I could not analyze the scene right now.", true);
+  } finally {
+    setTimeout(() => { appState.isInteracting = false; }, 5000);
+  }
+}
+
 function initSpeechRecognition() {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SpeechRecognition) {
@@ -842,57 +1069,51 @@ function initSpeechRecognition() {
     return;
   }
 
-  appState.recognition = new SpeechRecognition();
-  appState.recognition.continuous = false;
-  appState.recognition.interimResults = false;
-  appState.recognition.lang = 'en-US';
+  try {
+    appState.recognition = new SpeechRecognition();
+    appState.recognition.continuous = false;
+    appState.recognition.interimResults = false;
+    appState.recognition.lang = 'en-US';
 
-  appState.recognition.onstart = () => {
-    appState.isListening = true;
-    middleCard.classList.add('listening');
-    middleTitle.textContent = "LISTENING...";
-    if (navigator.vibrate) navigator.vibrate(60);
-  };
+    appState.recognition.onstart = () => {
+      appState.isListening = true;
+      appState.isInteracting = true;
+      middleCard.classList.add('listening');
+      middleTitle.textContent = "LISTENING...";
+      if (navigator.vibrate) navigator.vibrate(60);
+    };
 
-  appState.recognition.onresult = async (event) => {
-    const transcript = event.results[0][0].transcript.trim();
-    stopListening();
-    console.log("[STT Heard]:", transcript);
+    appState.recognition.onresult = async (event) => {
+      const transcript = event.results[0][0].transcript.trim();
+      stopListening();
+      console.log("[STT Heard]:", transcript);
+      await handleUserQuestion(transcript);
+    };
 
-    audioCtrl.speak("Checking scene for you...", true);
+    appState.recognition.onerror = (e) => {
+      console.warn("[SpeechRecognition Error]:", e.error);
+      stopListening();
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        openQuestionDialog();
+      }
+    };
 
-    hiddenCtx.drawImage(video, 0, 0, hiddenCanvas.width, hiddenCanvas.height);
-    const frameSnapshot = hiddenCanvas.toDataURL('image/jpeg', 0.85);
-
-    try {
-      const res = await fetch('/api/chat/multimodal', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query: transcript,
-          image_b64: frameSnapshot,
-          lang: 'en'
-        })
-      });
-      const data = await res.json();
-      audioCtrl.speak(data.reply, true);
-    } catch (e) {
-      audioCtrl.speak("Could not connect to vision assistant. Path is clear.", true);
-    }
-  };
-
-  appState.recognition.onerror = () => stopListening();
-  appState.recognition.onend = () => stopListening();
+    appState.recognition.onend = () => stopListening();
+  } catch (err) {
+    console.warn("SpeechRecognition init failed:", err);
+  }
 }
 
 function startListening() {
   if (appState.recognition && !appState.isListening) {
     try {
-      appState.recognition.lang = 'en-US';
       appState.recognition.start();
     } catch (e) {
-      console.warn("Recognition error:", e);
+      console.warn("Recognition start error:", e);
+      openQuestionDialog();
     }
+  } else if (!appState.recognition) {
+    openQuestionDialog();
   }
 }
 
@@ -903,7 +1124,7 @@ function stopListening() {
 }
 
 // ============================================================================
-// 8. SYSTEM BOOTSTRAP
+// 9. SYSTEM BOOTSTRAP
 // ============================================================================
 window.addEventListener('DOMContentLoaded', () => {
   initCamera();

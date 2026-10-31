@@ -69,9 +69,8 @@ class GroqAgent:
 
         # Try Multimodal Vision models in order of capability
         vision_candidates = [
+            "qwen/qwen3.8-27b",
             settings.GROQ_VISION_MODEL,
-            "llama-3.2-11b-vision-preview",
-            "llama-3.2-90b-vision-preview",
             settings.GROQ_FALLBACK_MODEL
         ]
 

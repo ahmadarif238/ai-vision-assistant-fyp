@@ -132,7 +132,7 @@ async def analyze_scene_api(req: SceneAnalysisQuery):
     
     status = "DANGER" if hazard_res["has_critical_hazard"] else "SAFE"
     alert = hazard_res["priority_alert"] or (depth_res.get("depth_alert") if depth_res else None)
-    speech = alert if alert else hazard_res["scene_description"]
+    speech = alert if (alert and status == "DANGER") else None
         
     return {
         "status": status,

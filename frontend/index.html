@@ -17,8 +17,8 @@
   <section class="touch-zone zone-top" id="zoneTop" aria-label="Camera View and Walking Path Status">
     <!-- Top Utility Controls Bar -->
     <div class="top-bar">
-      <button id="voiceToggleBtn" class="pill-btn voice-btn" aria-label="Toggle Voice Guidance" title="Mute or Unmute Voice Guidance">
-        🔊 <span id="voiceLabel">VOICE ON</span>
+      <button id="voiceToggleBtn" class="pill-btn voice-btn" aria-label="Toggle Navigation Alerts" title="Mute or Unmute Voice Alerts">
+        🔊 <span id="voiceLabel">ALERTS: ON</span>
       </button>
 
       <div class="mode-pill" id="modePill" aria-live="polite">
@@ -44,11 +44,11 @@
       </div>
     </div>
 
-    <!-- Giant Path Status Banner (Green for Safe / Red-Yellow for Danger) -->
+    <!-- Giant Path Status Banner (Green for Safe / Red for Danger) -->
     <div id="statusBanner" class="giant-status-banner safe" role="status" aria-live="assertive">
       <span class="status-symbol" id="statusSymbol">✓</span>
       <span class="status-headline" id="statusHeadline">SAFE PATH</span>
-      <span class="status-subline" id="statusSubline">Forward corridor is clear to walk</span>
+      <span class="status-subline" id="statusSubline">SILENT MONITORING</span>
     </div>
   </section>
 
@@ -63,7 +63,7 @@
       <p class="middle-subtext" id="middleSubtext">Touch anywhere here. I will listen and describe what is in front of you.</p>
       <div class="speech-bubble" id="speechBubble" aria-live="polite">
         <span class="bubble-speaker">🔊 ASSISTANT:</span>
-        <span class="bubble-text" id="bubbleText">Tap anywhere to start voice guidance.</span>
+        <span class="bubble-text" id="bubbleText">Tap anywhere to start. Path is silently monitored.</span>
       </div>
     </div>
   </section>
@@ -86,6 +86,22 @@
       <span class="half-sub" id="repeatSub">Hear last message or check audio</span>
     </button>
   </section>
+
+  <!-- Accessible Question Dialog Fallback (For devices without STT or text preference) -->
+  <dialog id="questionDialog" class="accessible-dialog" aria-labelledby="dialogTitle">
+    <div class="dialog-content">
+      <div class="dialog-header">
+        <h2 id="dialogTitle">💬 Ask Vision Assistant</h2>
+        <button id="dialogCloseBtn" class="dialog-close" aria-label="Close dialog">✕</button>
+      </div>
+      <p class="dialog-desc">Type a question about what is in front of the camera:</p>
+      <input type="text" id="dialogInput" class="accessible-input" placeholder="e.g., What is around me? Where is the door?" />
+      <div class="dialog-actions">
+        <button id="dialogSubmitBtn" class="dialog-action-btn primary">ASK ASSISTANT</button>
+        <button id="dialogCancelBtn" class="dialog-action-btn">CANCEL</button>
+      </div>
+    </div>
+  </dialog>
 
   <!-- Hidden Working Elements -->
   <canvas id="hiddenCanvas" style="display: none;"></canvas>
